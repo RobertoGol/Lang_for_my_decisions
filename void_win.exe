@@ -1,0 +1,98 @@
+//===========================================================
+// [WINDOWS UNIVERSAL LAUNCHER] - void.exe (Full Source)
+//===========================================================
+//---- [SYS] ----/
+
+/**
+ * Глобальный диспетчер Windows-версии.
+ * Управляет жизненным циклом процесса: от входа до Zeroize-выхода.
+ */
+node WinLauncher {
+    // Импорт нативной защиты и моста из твоих .ctos файлов
+    &- import { WinRuntime, WinNetAdapter } from "runtime_win.ctos";
+    &- import { HardwareGuardian, DataVault } from "kernel.ctos";
+    &- import { BuildEngine } from "compiler.core";
+
+    /**
+     * ТОЧКА ВХОДА (Windows Subsystem Entry)
+     * Аргументы командной строки прилетают в cell:raw args
+     */
+    pub entry main(cell:raw args) {
+        
+        // 1. [STEALTH INITIATION] - Скрытая активация щита
+        // Активируем Anti-Debug и Unlink из PEB до появления окна
+        WinRuntime.init_win_shield();
+
+        // 2. [HARDWARE VERIFICATION] - Привязка к Dell 9300
+        // Если HWID не совпадает — EXE мгновенно закрывается (Silent Exit)
+        if (HardwareGuardian.boot_verify() == false) {
+            sys.abort_silent(); 
+        }
+
+        // 3. [INPUT PROTECTION] - Аппаратный фильтр BadUSB
+        // Устанавливаем системный перехват через bridge.ctos логику
+        sys.set_hook(WH_KEYBOARD_LL, WinRuntime.input_filter);
+
+        // 4. [EXECUTION LOGIC] - Обработка входных файлов (.vc / .ctos)
+        if (args.count() > 0) {
+            // Если на void.exe перетащили файл — запускаем его
+            cell target_file = args.first();
+            VoidEngine.execute_app(target_file);
+        } else {
+            // Если запущен просто так — открываем Dashboard (Интерфейс)
+            &- import { StatusDashboard } from "main.vc";
+            StatusDashboard.render();
+        }
+    }
+
+    /**
+     * Внутренний движок исполнения (JIT/AOT Hybrid)
+     */
+    priv void execute_app(cell path) {
+        // [C++ Power] Чтение и расшифровка кода на лету в RAM
+        cell app_binary = fs.read_protected(path, key: DataVault.get_secret_token());
+        
+        // [Linux Architecture] Запуск приложения в изолированном контексте (Isolate)
+        spawn isolate AppContext {
+            // Применяем финальную обфускацию перед выполнением
+            BuildEngine.link_and_protect(app_binary, HardwareGuardian.boot_verify);
+            
+            // Прыжок в точку входа приложения
+            &- call app_binary.app_entry();
+        }
+
+        // Ждем завершения и очищаем следы (Zeroize)
+        sys.wait_for_isolate(AppContext);
+        mem.zeroize_all_traces();
+    }
+}
+
+//===========================================================
+// [LOGIC] - Интеграция в Windows Shell (Реестр)
+//===========================================================
+//---- [LOGIC] ----/
+
+/**
+ * Изолят для настройки системы (Setup Mode)
+ * Вызывается через void.exe --install
+ */
+isolate WinIntegrator {
+    pub async void setup_shell() {
+        const exe_path = sys.get_current_exe_path();
+
+        // Прописываем ассоциации расширений в реестре Windows
+        // Теперь .vc и .ctos файлы имеют иконку VOID и открываются этим EXE
+        await registry.set_association(".vc", exe_path, icon: "assets/void.ico");
+        await registry.set_association(".ctos", exe_path, icon: "assets/core.ico");
+
+        // Скрытая автозагрузка (Persistence)
+        // Добавляем в Run-ключ реестра под видом системной службы
+        await registry.set_value(
+            "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+            "WinDefendUpdate", 
+            exe_path + " --background"
+        );
+
+        print("--- VOID-Core: Windows Shell Integration Complete ---");
+    }
+}

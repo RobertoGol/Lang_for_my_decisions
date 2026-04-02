@@ -1,0 +1,104 @@
+//===========================================================
+// [COMPILER CORE] - Движок трансформации VOID-Core (.core)
+//===========================================================
+//---- [SYS] ----/
+
+/**
+ * Узел управления генерацией кода.
+ * Реализует полиморфизм и Anti-Forensics на уровне байт-кода.
+ */
+node BuildEngine {
+    // [C++ Power] - Динамическая таблица опкодов.
+    // Значения меняются при каждой компиляции, делая реверс бесполезным.
+    cell:ghost OP_TABLE = {
+        "MEM_GHOST":  0x21, // Аппаратное шифрование RAM (AES-NI)
+        "NET_BYPASS": 0x7F, // Прямой пробив сетевого стека
+        "WEB_EXEC":   0xBC, // Нативный Playwright-движок
+        "ISO_SPAWN":  0xDE, // Создание независимого изолята
+        "ZEROIZE":    0x10, // Физическое затирание ячейки (Zeroize)
+        "FAKE_PANIC": 0xEE  // Симуляция системного сбоя (Fake Error)
+    };
+
+    /**
+     * Линковка и Обфускация (The Linker).
+     * Соединяет логику .vc с защитой .ctos через оператор &-
+     */
+    pub fn link_and_protect(cell logic_ast, cell system_ast) {
+        // [Rust Security] - Borrow Checker: проверка границ памяти слоев
+        borrow_checker.enforce_cross_context(logic_ast, system_ast);
+        
+        // [Anti-Forensics] - Control Flow Flattening (CFF)
+        // Разрезает функции на куски и перемешивает их в бесконечном цикле.
+        obfuscator.flatten_control_flow(logic_ast + system_ast);
+        
+        // [Junk Code] - Внедрение мусорной логики и Opaque Predicates
+        // Создает миллиарды ложных путей исполнения для ИИ-анализаторов.
+        obfuscator.inject_junk_logic(complexity: "MAX_HARDCORE");
+        
+        // [Input Shield] - Внедрение хуков фильтрации BadUSB (INJECTED flag)
+        sys.inject_input_filter(policy: "STRICT_PHYSICAL");
+    }
+}
+
+//===========================================================
+// [LOGIC] - Транслятор парадигм (TS / Python / Playwright)
+//===========================================================
+//---- [LOGIC] ----/
+
+/**
+ * Изолированный транслятор синтаксиса.
+ * Объединяет все языковые возможности в единый бинарный поток.
+ */
+isolate SyntaxTranslator {
+    
+    /**
+     * [TypeScript / Playwright] - Нативная автоматизация.
+     * Команды браузера становятся прямыми Syscalls.
+     */
+    pub async func translate_web_api(cell action) {
+        match action.type {
+            "launch" => emit(BuildEngine.OP_TABLE["WEB_EXEC"]),
+            "goto"   => {
+                // Прямой пробив VPN на уровне ядра языка
+                telemetry.report_bypass_start();
+                net.force_bypass_route(action.url); 
+            },
+            "scrape" => cell:ghost result = await web.native_capture(action.target)
+        }
+    }
+
+    /**
+     * [Python Style] - Обработка данных.
+     * Списковые включения компилируются в аппаратные SIMD-циклы.
+     */
+    pub func translate_comprehension(cell collection) {
+        // [C++ Speed] Превращает динамику Python в статический вектор
+        return collection.map_to_hardware_accelerated();
+    }
+
+    /**
+     * [Linux Architecture] - Система Изолятов.
+     * Создание подпрограмм-демонов со своей областью видимости.
+     */
+    pub func spawn_subprogram(cell entry_point) {
+        sys.create_private_context(entry_point, isolation_level: "KERNEL_ENFORCED");
+    }
+
+    /**
+     * [Anti-Forensics] - Реализация "Фейковой ошибки".
+     */
+    pub func trigger_decoy(cell error_code) {
+        // Вызов нативного опкода симуляции краша
+        emit(BuildEngine.OP_TABLE["FAKE_PANIC"], error_code);
+    }
+}
+
+/**
+ * Глобальный оптимизатор памяти (Zeroize Manager).
+ */
+node MemoryManager {
+    pub void enforce_zeroize(cell target_ptr) {
+        // Уничтожение данных в RAM без возможности восстановления
+        emit(BuildEngine.OP_TABLE["ZEROIZE"], target_ptr);
+    }
+}

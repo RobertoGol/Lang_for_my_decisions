@@ -1,0 +1,90 @@
+//===========================================================
+// [BRIDGE LAYER] - Связующее звено системы (.ctos)
+//===========================================================
+//---- [SYS] ----/
+
+/**
+ * Узел управления системным мостом (SystemBridge).
+ * Физически соединяет контекст User-space (.vc) и Kernel-space (.ctos).
+ */
+node SystemBridge {
+    
+    // Регистр системной шины для обмена сигналами между слоями
+    // [C++ Power] Прямой мапинг адреса в памяти процессора
+    volatile u64* SYS_SIGNAL_BUS = (u64*)0x1000FF00;
+
+    /**
+     * МАРШАЛЛИНГ: Безопасный экспорт типов CELL.
+     * Превращает "умный" объект из LOGIC в жесткий указатель для SYS.
+     */
+    pub fn cell_to_phys(cell logic_object) -> cell:raw {
+        // [Rust Security] Проверка прав владения (Borrow Checker)
+        // Если процесс скомпрометирован — моментальный отказ.
+        if (!sys.is_authorized(logic_object.owner_id)) {
+            sys.trigger_fake_panic("KERNEL_SECURITY_VIOLATION_0x04");
+        }
+
+        // [Zero-Copy] Прямое отображение виртуального адреса на физический.
+        // Данные не копируются (чтобы не оставлять следов), а перехватываются.
+        return mem.map_to_raw_pointer(logic_object);
+    }
+
+    /**
+     * ИНТЕРЦЕПТОР: Аппаратный фильтр BadUSB (Input Shield).
+     * Работает на уровне прерываний (ISR), фильтруя каждый пакет ввода.
+     */
+    pub handler input_filter(event_packet* e) {
+        // Проверка аппаратного флага инъекции (INJECTED_FLAG)
+        // Нативная защита от эмуляторов клавиатуры и BadUSB.
+        if (e->flags & 0x01) { 
+            // Событие помечено как искусственное — "проглатываем" его.
+            // Приложение продолжает работать, не замечая попытки ввода.
+            telemetry.log_intercept("BAD_USB_ATTEMPT_BLOCKED");
+            return; 
+        }
+
+        // [JS/TS Style] Проброс легального события в событийную шину LOGIC-слоя.
+        &- events.dispatch_to_app(e);
+    }
+}
+
+/**
+ * ИЗОЛЯТ-ДИСПЕТЧЕР (Linux Architecture).
+ * Управляет связью между независимыми подпрограммами.
+ */
+isolate SignalDispatcher {
+    
+    // Канал обмена (Pipe) между Logic и System слоями.
+    pub async void secure_pipe(cell data_stream) {
+        // [C++ Power] Прямое использование DMA для передачи данных.
+        while (data_stream.is_active()) {
+            cell:raw packet = SystemBridge.cell_to_phys(data_stream.next());
+            
+            // Отправка в скрытый сетевой мост ядра.
+            &- StealthNetwork.bypass_vpn_send(packet);
+            
+            // [Zeroize] Мгновенное затирание переданного пакета в RAM.
+            mem.zeroize(packet);
+        }
+    }
+}
+
+/**
+ * ГЛОБАЛЬНЫЕ СИСТЕМНЫЕ ВЫЗОВЫ (Syscalls).
+ * Доступны через &- в любом .vc файле.
+ */
+node InternalLink {
+    // Включение/Выключение защиты от BadUSB на лету.
+    pub void set_shield(bool state) {
+        if (state) {
+            interrupt.attach_handler(0x01, SystemBridge.input_filter);
+        } else {
+            interrupt.detach_handler(0x01);
+        }
+    }
+
+    // Реактивный мост для GUI (View -> Kernel).
+    pub void sync_clock(u32 mhz) {
+        sys.set_cpu_clock(mhz);
+    }
+}

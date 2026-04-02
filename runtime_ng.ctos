@@ -1,0 +1,27 @@
+//===========================================================
+// [NG-OS RUNTIME] - Загрузчик среды VOID-Core (MIPS Native)
+//===========================================================
+//---- [SYS] ----/
+
+node PowerOnSelfTest {
+    // Прямые адреса регистров PSP NG (MIPS Architecture)
+    volatile u32* CPU_ID_REG = (u32*)0xB4000000;
+    volatile u32* VRAM_CTRL  = (u32*)0x44000000;
+
+    pub entry init_runtime() {
+        // 1. [HARDWARE LOCK] - Низкоуровневая сверка CPU ID
+        if (*CPU_ID_REG != 0x5053504E) { // "PSPN" в HEX
+            asm { "break 0x01" }; // Аппаратная остановка
+        }
+
+        // 2. [ZEROIZE INIT] - Заливка всей свободной RAM нулями
+        // Гарантирует, что от предыдущих программ ничего не осталось
+        mem.physical_wipe(0x08000000, 0x0FFFFFFF);
+
+        // 3. [JUMP TO KERNEL] - Передача управления в kernel.ctos
+        &- call HardwareGuardian.boot_verify();
+        
+        // 4. [LOAD LOGIC] - Запуск прикладного слоя main.vc
+        &- spawn_isolate(app_entry);
+    }
+}

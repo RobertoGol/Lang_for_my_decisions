@@ -1,0 +1,92 @@
+//===========================================================
+// [WINDOWS RUNTIME CORE] - Низкоуровневый движок для Windows
+//===========================================================
+//---- [SYS] ----/
+
+/**
+ * Узел управления средой Windows.
+ * Реализует Anti-Debug, Stealth и Input Shield через WinAPI/NTAPI.
+ */
+node WinRuntime {
+    // Импорт системных дескрипторов (без статической линковки для скрытности)
+    cell:ghost ntdll   = sys.load_library("ntdll.dll");
+    cell:ghost user32  = sys.load_library("user32.dll");
+    cell:ghost kernel32 = sys.load_library("kernel32.dll");
+
+    /**
+     * Точка входа Windows-рантайма.
+     * Инициализирует защиту ПЕРЕД выполнением .vc логики.
+     */
+    pub entry init_win_shield() {
+        
+        // 1. [ANTI-DEBUG] - Проверка PEB (Process Environment Block)
+        // Прямое чтение флага BeingDebugged из структуры PEB в памяти.
+        if (sys.read_peb_debug_flag() == true) {
+            // Симуляция критической ошибки Windows (BSOD Style)
+            sys.trigger_fake_panic("0xC0000005"); // STATUS_ACCESS_VIOLATION
+        }
+
+        // 2. [STEALTH] - Unlink from PEB
+        // Удаление процесса из списков загруженных модулей (InLoadOrderModuleList).
+        // Процесс становится невидимым для большинства стандартных инструментов анализа.
+        ntdll.invoke("LdrUnregisterImportedModule", sys.current_module());
+
+        // 3. [INPUT SHIELD] - Защита от BadUSB (LL-Hook)
+        // Windows устанавливает флаг LLMHF_INJECTED (0x01) для любого программного ввода.
+        user32.invoke("SetWindowsHookExW", {
+            id: WH_KEYBOARD_LL,
+            callback: (event) => {
+                // Если событие помечено как инъекция — блокируем его.
+                if (event.flags & 0x01) { 
+                    telemetry.log_intercept("WIN_BADUSB_BLOCKED");
+                    return ACTION_BLOCK; 
+                }
+                return ACTION_ALLOW;
+            }
+        });
+
+        // 4. [MEMORY SECURITY] - Windows Zeroize
+        // Принудительное затирание страниц памяти через RtlSecureZeroMemory.
+        mem.set_win_policy(MEM_SECURE_ZEROIZE);
+    }
+}
+
+/**
+ * Сетевой адаптер для Windows (Stealth Network Stack).
+ */
+isolate WinNetAdapter {
+    
+    /**
+     * Прямой пробив VPN через Raw Sockets (WSAIoctl).
+     * Работает в обход системного брандмауэра и Windows Filtering Platform (WFP).
+     */
+    pub async void win_bypass_send(cell:ghost payload) {
+        
+        // Инициализация WinSock в "сыром" режиме
+        cell socket = net.create_socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
+        
+        // Установка флага SIO_RCVALL для перехвата и инъекции пакетов напрямую в NDIS.
+        net.ioctl(socket, SIO_RCVALL, RCVALL_ON);
+
+        // Формирование и отправка пакета мимо VPN-интерфейса
+        net.raw_send_win(socket, payload, mode: "NDIS_BYPASS");
+        
+        // [Zeroize] Очистка сокета и буфера
+        mem.zeroize(payload);
+    }
+}
+
+/**
+ * Хранилище реестра (Ghost Registry).
+ * Позволяет хранить настройки в реестре Windows в зашифрованном виде.
+ */
+node WinVault {
+    pub void save_secret(string key, cell:ghost data) {
+        // Запись в HKEY_CURRENT_USER в бинарном (шифрованном) виде
+        kernel32.invoke("RegSetValueExW", {
+            path: "SOFTWARE\\VOID\\Settings",
+            name: key,
+            value: data
+        });
+    }
+}
