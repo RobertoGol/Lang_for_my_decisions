@@ -1,2 +1,2 @@
 read 
-Lang_for_my_desisions/Learn/&*All from here*&
+Lang_for_my_decisions/Learn/&*All from here*&
