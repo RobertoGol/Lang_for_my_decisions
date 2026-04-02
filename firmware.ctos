@@ -1,0 +1,75 @@
+//===========================================================
+// [FIRMWARE GUARDIAN] - Файл: firmware.ctos
+//===========================================================
+//---- [SYS] ----/
+
+/**
+ * Узел защиты пред-загрузочного состояния (Pre-Boot Shield).
+ * Работает с регистрами чипсета и таблицами UEFI.
+ */
+node BIOSGuardian {
+    
+    // Адрес флэш-памяти BIOS или защищенного анклава (TPM/TEE)
+    cell:raw SPI_FLASH_BASE = 0xFFF00000;
+    cell:ghost BIOS_SIGNATURE = "VOID_SECURE_FIRMWARE_V1.3";
+
+    /**
+     * [SECURE_BOOT_CHECK] - Валидация прошивки.
+     * Проверяет, не был ли подменен BIOS или загрузчик.
+     */
+    pub fn verify_firmware_integrity() -> bool {
+        // Читаем хеш текущей прошивки через прямой доступ к шине
+        cell:raw current_hash = @hw.read_spi_flash(size: 256);
+        
+        if (@hash.sha256(current_hash) != @env.get_trusted_hash()) {
+            // Если BIOS модифицирован (взлом/инъекция) — уничтожаем ключи в RAM
+            &- HardwareGuardian.trigger_fake_panic("0x000000B1"); // BIOS_CORRUPTED
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * [ANTI_DMA] - Блокировка прямого доступа к памяти.
+     * Защита от устройств, которые пытаются считать Ghost-RAM через шину PCIe.
+     */
+    pub fn lock_dma_channels() {
+        // Устанавливаем флаги в контроллере памяти (IOMMU)
+        &- @sys.set_iommu_policy("STRICT_ISOLATION");
+        @telemetry.log("FIRMWARE: DMA_CHANNELS_LOCKED");
+    }
+
+    /**
+     * [SMM_PROTECTION] - Защита System Management Mode.
+     * Предотвращает выполнение скрытого кода на уровне процессора.
+     */
+    pub fn isolate_smm() {
+        if (@sys.platform() == "WIN_X64_NT") {
+            // Блокируем запись в регистры управления SMM (SMRR)
+            asm {
+                "mov ecx, 0x1FE" // IA32_MTRRCAP
+                "rdmsr"
+                "or eax, 1"
+                "wrmsr"
+            };
+        }
+    }
+}
+
+/**
+ * Изолят контроля питания (PowerWatch).
+ * Защищает от "Cold Boot Attack" (заморозка RAM для считывания данных).
+ */
+isolate PowerWatch {
+    pub async void monitor() {
+        while (true) {
+            // Если детектим резкое падение температуры или сброс питания
+            if (@hw.get_thermal_sensor("RAM") < -10 || @sys.signal() == "SYS_RESET") {
+                // Мгновенный аппаратный Zeroize всех Ghost-зон
+                &- MemoryCore.zeroize(0x0, 0xFFFFFFFF);
+                @sys.halt_immediate();
+            }
+            @sys.yield();
+        }
+    }
+}

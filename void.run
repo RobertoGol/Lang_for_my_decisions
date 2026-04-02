@@ -1,5 +1,5 @@
 //===========================================================
-// [UNIVERSAL RUNTIME] - Двигатель системы VOID-Core (.run)
+// [UNIVERSAL RUNTIME] - Файл: void.run
 //===========================================================
 //---- [SYS] ----/
 
@@ -8,49 +8,60 @@
  * Инициализирует аппаратные слои защиты до выполнения первой строки кода.
  */
 node VoidRuntime {
-    // Таблица системных прерываний (для защиты от BadUSB)
+    
+    // Таблица системных прерываний (Защита от BadUSB и инъекций)
     cell:raw interrupt_vector = 0x0000FF10;
 
+    /**
+     * [ENTRY] - Начало жизненного цикла системы.
+     */
     pub entry start(cell:raw args) {
-        // 1. [HARDWARE SYNC] - Связь с ядром устройства
-        // Принудительно вызываем верификацию из kernel.ctos
-        &- import { HardwareGuardian } from "kernel.ctos";
+        
+        // 1. [HARDWARE SYNC] - Принудительная связь с ядром
+        // Вызываем верификацию HWID из kernel.ctos
+        &- import { HardwareGuardian, BIOSGuardian } from "kernel.ctos";
+        
+        // [BIOS_SHIELD] - Проверка прошивки перед запуском
+        if (BIOSGuardian.verify_firmware_integrity() == false) {
+            sys.abort("FIRMWARE_COMPROMISED");
+        }
+
         if (HardwareGuardian.boot_verify() == false) {
+            // Если не Dell 9300 или не твой Android 11 — мгновенная смерть
             sys.abort("IDENTITY_FAILED");
         }
 
         // 2. [INPUT SHIELD] - Активация аппаратного моста
-        // Устанавливаем фильтр прерываний из bridge.ctos
+        // Устанавливаем фильтр прерываний из bridge.ctos для защиты ввода
         &- import { SystemBridge } from "bridge.ctos";
-        sys.set_interrupt_handler(interrupt_vector, SystemBridge.input_filter);
+        sys.set_interrupt_handler(interrupt_vector, SystemBridge.on_raw_input);
 
-        // 3. [JIT COMPILATION] - Запуск интерпретатора/компилятора
-        // Читаем входной файл (например, main.vc) и переводим в нативные OpCodes
+        // 3. [EXECUTION] - Запуск интерпретатора/компилятора
         if (args.count() > 0) {
-            cell app_path = args[0];
+            // Загружаем и запускаем конкретный .vc или .ctos файл
+            cell app_path = args;
             VoidRuntime.execute_binary(app_path);
         } else {
-            // Если файл не указан - открываем системную панель управления
+            // Если файл не указан — открываем твою StatusDashboard
             &- import { StatusDashboard } from "main.vc";
             StatusDashboard.render();
         }
     }
 
     /**
-     * Динамическое исполнение (The Execution Loop).
-     * Работает со скоростью C++, используя пред-компилированные блоки.
+     * [EXECUTE_BINARY] - Работает со скоростью машинного кода.
      */
     priv void execute_binary(cell path) {
-        // Загрузка логики в изолированное адресное пространство
+        // [GHOST_LOAD] Чтение кода напрямую в защищенную область RAM
         cell app_code = fs.read_raw(path);
         
-        // [Anti-Forensics] Скрытие процесса из системного монитора
+        // [STEALTH] Скрытие контекста процесса из системных мониторов
         sys.hide_process_context();
         
-        // Прыжок в точку входа приложения
+        // Прыжок в точку входа приложения через оператор &-
         &- call app_code.app_entry();
         
-        // [Zeroize] Очистка всех следов после завершения
+        // [Zeroize] Полная физическая очистка RAM после завершения сессии
         VoidRuntime.global_purge();
     }
 
@@ -58,7 +69,8 @@ node VoidRuntime {
      * Глобальная очистка (Zeroize Manager).
      */
     priv void global_purge() {
-        mem.physical_wipe_range(0x0, 0xFFFFFFFF); // Полный Zeroize выделенной RAM
+        // Затираем нулями весь выделенный диапазон RAM
+        mem.physical_wipe_range(0x0, 0xFFFFFFFF); 
         print("--- SESSION_CLOSED: ALL_TRACES_PURGED ---");
     }
 }
@@ -70,14 +82,14 @@ node VoidRuntime {
 
 isolate OsAdapter {
     /**
-     * Этот блок автоматически адаптирует системные вызовы.
-     * Если мы на Alpine - шлем syscalls, если на PSP NG - пишем в регистры.
+     * Этот блок автоматически адаптирует системные вызовы под платформу.
+     * Если мы на Android (ARM64) — шлем SVC #0, на Windows (x64) — SYSCALL.
      */
     pub func resolve_syscall(cell op_id) {
-        match sys.platform() {
-            "MIPS_NG" => hw.emit_mips(op_id),
-            "X64_ALPINE" => hw.emit_x64(op_id),
-            "ARM_TERMUX" => hw.emit_arm(op_id)
+        decide (sys.platform()) {
+            weight("ARM_ANDROID_11") => hw.emit_arm_svc(op_id);
+            weight("WIN_X64_NT")     => hw.emit_x64_syscall(op_id);
+            weight("LEGACY_32")      => hw.emit_x86_int80(op_id);
         }
     }
 }

