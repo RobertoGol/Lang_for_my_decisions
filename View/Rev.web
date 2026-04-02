@@ -1,0 +1,24 @@
+//---- [VIEW] ----/
+<html>
+<head>
+    <link rel="stylesheet" href="assets/bootstrap.min.css">
+</head>
+<body class="bg-black text-info p-4">
+    <div class="border border-info p-3">
+        <h4 class="text-uppercase">Reverse Engine Mode</h4>
+        <hr class="border-info">
+        
+        <!-- Сбор данных через Playwright-native -->
+        <div class="alert alert-secondary bg-dark text-info">
+            <?sql 
+                INSERT INTO ghost_table (name, status) 
+                SELECT target_name, 'captured' FROM external_scan; 
+            ?>
+        </div>
+        
+        <button class="btn btn-sm btn-info" onclick="&- StealthNetwork.listen_secret()">
+            OPEN GHOST PORT
+        </button>
+    </div>
+</body>
+</html>

@@ -1,11 +1,10 @@
 //===========================================================
-// [APPLICATION LAYER] - Интеллект и Интерфейс (.vc)
+// [APPLICATION LAYER] - Файл: main.vc
 //===========================================================
 //---- [LOGIC] ----/
 
 /**
  * [&-] ОПЕРАТОР СВЯЗИ: Импорт защищенных узлов из ядра .ctos.
- * Прямое соединение высокоуровневой логики с аппаратным щитом.
  */
 &- import { HardwareGuardian, StealthNetwork, DataVault } from "kernel.ctos";
 
@@ -25,7 +24,7 @@ interface SyncTask {
  * Объединяет возможности всех языков в одном потоке.
  */
 app_entry {
-    // 1. [C++ Power] - Принудительная инициализация защиты ядра (Hardware Check)
+    // 1. [C++ Power] - Принудительная инициализация защиты ядра
     HardwareGuardian.boot_verify();
 
     // 2. [TypeScript/Playwright] - Нативная автоматизация.
@@ -33,17 +32,17 @@ app_entry {
         id: DataVault.get_secret_token(),
         url: "https://secure-node.io",
         is_stealth: true,
-        on_leak: "ignore_injected" // Нативная инструкция для компилятора
+        on_leak: "ignore_injected" 
     };
 
-    // Скрытая телеметрия: пробив VPN встроенным методом перед запуском сессии
+    // Скрытая телеметрия: пробив VPN встроенным методом
     telemetry.report_origin(mode: "bypass_vpn");
 
     // Запуск встроенного стелс-браузера (Web-Native Engine)
     async let browser = web.launch({ 
         stealth: current_task.is_stealth, 
-        engine: "internal_ng",       // Движок для PSP NG / Alpine / Termux
-        on_input_leak: current_task.on_leak // Интеграция с фильтром BadUSB из ядра
+        engine: "internal_ng",       // Движок для Android 11 / x64
+        on_input_leak: current_task.on_leak 
     });
 
     // [JS/TS Style] - Асинхронная навигация и взаимодействие
@@ -53,23 +52,20 @@ app_entry {
         await browser.fill("#access_token", current_task.id);
         await browser.click("#authorize");
     } else {
-        // Симуляция сбоя памяти, если узел не соответствует ожиданиям
+        // Симуляция сбоя памяти
         sys.trigger_fake_error("0x0000005"); 
     }
 
     // 3. [Python Style] - Обработка данных (List Comprehensions).
-    // Собираем все текстовые данные из элементов с классом .payload
-    // CELL автоматически шифрует результат (ghost), так как он идет в StealthNetwork.
-    cell raw_data = [node.text for node in await browser.query_all(".payload") if node.is_visible()];
+    cell raw_data =;
 
     // 4. [Rust Style] - Безопасная передача (Move Semantics).
-    // Передаем данные в изолят ядра для отправки мимо VPN (Raw L2 Direct).
     if (raw_data.len() > 0) {
-        // Данные 'переезжают' (move) в StealthNetwork и мгновенно стираются в приложении.
+        // Данные 'переезжают' (move) в StealthNetwork и стираются в приложении.
         move raw_data -> StealthNetwork.bypass_vpn_send(raw_data);
     }
     
-    // [Zeroize] - Принудительная очистка RAM: физическое затирание всех следов.
+    // [Zeroize] - Принудительная очистка RAM
     mem.zeroize_all_locals();
 }
 
@@ -78,12 +74,7 @@ app_entry {
 //===========================================================
 //---- [VIEW] ----/
 
-/**
- * Рендеринг интерфейса (React-like).
- * Описывает вывод на экран PSP NG или в CLI-терминал Termux.
- */
 page StatusDashboard {
-    // Автоматическая привязка к состоянию ядра (Reactive Binding)
     render() {
         return <view>
             <header shadow="true">VOID-CORE INTERFACE v1.0</header>
@@ -99,10 +90,9 @@ page StatusDashboard {
                 INITIALIZE SECURE SESSION
             </button>
             
-            // Прямое управление частотой железа (как в C++ через .ctos)
+            // Прямое управление частотой железа (C++ Style)
             <slider min="333" max="800" onchange={sys.set_cpu_freq} label="CPU CLOCK" />
             
-            // Встроенный плеер для статус-видео (Media Support)
             <video src="assets/status_fx.mp4" loop="true" autoplay="true" opacity="0.4" />
         </view>;
     }

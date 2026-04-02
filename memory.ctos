@@ -1,0 +1,98 @@
+//===========================================================
+// [MEMORY KERNEL] - Файл: memory.ctos
+//===========================================================
+//---- [SYS] ----/
+
+node MemoryCore {
+    // Параметры страницы (Multi-Arch: 32/64 bit)
+    v_word PAGE_SIZE = 4096; 
+    v_addr RAM_START = @sys.get_ram_base();
+
+    /**
+     * [GHOST_ENGINE] - Инициализация защищенной области.
+     * Создает в RAM "слепую зону", невидимую для системных дамперов.
+     */
+    pub entry init_ghost_zone() {
+        if (@sys.bitness() == 64) {
+            // Для x64/ARM64 (Android 11 / Ноуты)
+            @mem.map_secure_range(0x08000000, 0x0FFFFFFF); 
+        } else {
+            // Для 32-bit (Старые ноуты) - сегментированная память
+            @mem.map_legacy_segment(0x00100000, 64 * 1024); // 64MB лимит
+        }
+    }
+
+    /**
+     * [GHOST_ALLOC] - Выделение зашифрованной страницы.
+     */
+    pub fn alloc_ghost(v_word blocks) -> v_addr {
+        v_addr raw_ptr = @sys.mmap_anonymous(blocks * PAGE_SIZE);
+        @sys.set_page_protection(raw_ptr, "ENCRYPTED_RAM");
+        @mem.register_owner(raw_ptr, @sys.current_isolate_id());
+        
+        // Сразу включаем аппаратную защиту страницы
+        MemoryCore.protect_page(raw_ptr);
+        return raw_ptr;
+    }
+
+    /**
+     * [ZEROIZE_PHYSICAL] - Физическое затирание.
+     * Выполняется на уровне инструкций CPU (REP STOS / STR XZR).
+     */
+    pub fn zeroize(v_addr ptr, v_word size) {
+        // Блок для x64 / x86 (Ноутбуки)
+        asm {
+            "xor rax, rax"          
+            "mov rcx, %1"           
+            "mov rdi, %0"           
+            "rep stosq"             
+            : : "r"(ptr), "r"(size / 8)
+            : "rax", "rcx", "rdi", "memory"
+        };
+        
+        // Блок для ARM64 (Android 10/11)
+        asm {
+            "mov x0, %0"
+            "mov x1, %1"
+            "loop_z: str xzr, [x0], #8"
+            "subs x1, x1, #1"
+            "bne loop_z"
+            : : "r"(ptr), "r"(size / 8)
+        };
+
+        // Защита для 32-bit систем (Legacy)
+        #if ARCH_BITS == 32
+            @mem.fill_zeros_32(ptr, size);
+        #endif
+    }
+
+    /**
+     * [PROTECT_PAGE] - Шифрование ячейки Ghost.
+     */
+    pub fn protect_page(v_addr page_ptr) {
+        v_word key = &- HardwareGuardian.get_master_key();
+        
+        // Аппаратный AES на лету
+        @hw.aes_encrypt_page(page_ptr, key);
+        
+        // Запрет дампов для ОС
+        @sys.set_mem_attribute(page_ptr, "PAGE_NO_DUMP | PAGE_GUARD");
+    }
+}
+
+/**
+ * Изолят-чистильщик (Garbage Collector + Zeroize).
+ * Работает в фоне, вычищая "мусор" после каждого move.
+ */
+isolate MemoryCleaner {
+    pub async void watch_and_wipe() {
+        while (true) {
+            // Ищем ячейки, помеченные к удалению после move
+            cell:raw target = @mem.get_next_dirty();
+            if (target != 0) {
+                MemoryCore.zeroize(target.address, target.size);
+            }
+            @sys.yield(); 
+        }
+    }
+}

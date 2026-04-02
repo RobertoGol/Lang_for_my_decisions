@@ -1,90 +1,56 @@
 //===========================================================
-// [BRIDGE LAYER] - Связующее звено системы (.ctos)
+// [BRIDGE LAYER] - Файл: bridge.ctos
 //===========================================================
 //---- [SYS] ----/
+// Универсальный коммутатор слоев (Native Bridge)
 
-/**
- * Узел управления системным мостом (SystemBridge).
- * Физически соединяет контекст User-space (.vc) и Kernel-space (.ctos).
- */
 node SystemBridge {
     
-    // Регистр системной шины для обмена сигналами между слоями
-    // [C++ Power] Прямой мапинг адреса в памяти процессора
-    volatile u64* SYS_SIGNAL_BUS = (u64*)0x1000FF00;
+    // Сигнальная шина (Bus). Адрес подстраивается под битность системы.
+    v_addr BUS_GATE = @sys.map_io_space(0x1000FF00);
 
     /**
-     * МАРШАЛЛИНГ: Безопасный экспорт типов CELL.
-     * Превращает "умный" объект из LOGIC в жесткий указатель для SYS.
+     * РЕАЛИЗАЦИЯ ОПЕРАТОРА &- (Signal Push)
+     * Связывает [LOGIC] и [SYS]. Поддерживает 32/64 bit.
      */
-    pub fn cell_to_phys(cell logic_object) -> cell:raw {
-        // [Rust Security] Проверка прав владения (Borrow Checker)
-        // Если процесс скомпрометирован — моментальный отказ.
-        if (!sys.is_authorized(logic_object.owner_id)) {
-            sys.trigger_fake_panic("KERNEL_SECURITY_VIOLATION_0x04");
+    pub fn signal_push(cell logic_data, v_word target_fn) {
+        
+        // 1. [ANTI-FORENSICS]
+        // Симуляция системного сбоя при несанкционированном доступе.
+        if (!@sys.verify_call_stack()) {
+            &- HardwareGuardian.trigger_fake_panic("0xC0000005");
         }
 
-        // [Zero-Copy] Прямое отображение виртуального адреса на физический.
-        // Данные не копируются (чтобы не оставлять следов), а перехватываются.
-        return mem.map_to_raw_pointer(logic_object);
-    }
-
-    /**
-     * ИНТЕРЦЕПТОР: Аппаратный фильтр BadUSB (Input Shield).
-     * Работает на уровне прерываний (ISR), фильтруя каждый пакет ввода.
-     */
-    pub handler input_filter(event_packet* e) {
-        // Проверка аппаратного флага инъекции (INJECTED_FLAG)
-        // Нативная защита от эмуляторов клавиатуры и BadUSB.
-        if (e->flags & 0x01) { 
-            // Событие помечено как искусственное — "проглатываем" его.
-            // Приложение продолжает работать, не замечая попытки ввода.
-            telemetry.log_intercept("BAD_USB_ATTEMPT_BLOCKED");
-            return; 
-        }
-
-        // [JS/TS Style] Проброс легального события в событийную шину LOGIC-слоя.
-        &- events.dispatch_to_app(e);
-    }
-}
-
-/**
- * ИЗОЛЯТ-ДИСПЕТЧЕР (Linux Architecture).
- * Управляет связью между независимыми подпрограммами.
- */
-isolate SignalDispatcher {
-    
-    // Канал обмена (Pipe) между Logic и System слоями.
-    pub async void secure_pipe(cell data_stream) {
-        // [C++ Power] Прямое использование DMA для передачи данных.
-        while (data_stream.is_active()) {
-            cell:raw packet = SystemBridge.cell_to_phys(data_stream.next());
-            
-            // Отправка в скрытый сетевой мост ядра.
-            &- StealthNetwork.bypass_vpn_send(packet);
-            
-            // [Zeroize] Мгновенное затирание переданного пакета в RAM.
-            mem.zeroize(packet);
-        }
-    }
-}
-
-/**
- * ГЛОБАЛЬНЫЕ СИСТЕМНЫЕ ВЫЗОВЫ (Syscalls).
- * Доступны через &- в любом .vc файле.
- */
-node InternalLink {
-    // Включение/Выключение защиты от BadUSB на лету.
-    pub void set_shield(bool state) {
-        if (state) {
-            interrupt.attach_handler(0x01, SystemBridge.input_filter);
+        // 2. [MULTI-ARCH MARSHALLING]
+        // Android 11/x64 -> Регистры | x86 Legacy -> Стек
+        if (@sys.is_64bit()) {
+            asm {
+                "mov x0, %0" // Данные в x0 (ARM64/x64)
+                "mov x8, %1" // ID функции в x8
+                "svc #0"     // Системный вызов
+                : : "r"(logic_data), "r"(target_fn)
+            };
         } else {
-            interrupt.detach_handler(0x01);
+            asm {
+                "push %0"
+                "mov eax, %1"
+                "int 0x80"   // Прерывание для 32-bit систем
+                : : "r"(logic_data), "r"(target_fn)
+            };
         }
     }
 
-    // Реактивный мост для GUI (View -> Kernel).
-    pub void sync_clock(u32 mhz) {
-        sys.set_cpu_clock(mhz);
+    /**
+     * [INPUT SHIELD]
+     * Аппаратный фильтр BadUSB и эмуляторов ввода.
+     */
+    pub handler on_raw_input(v_word event_ptr) {
+        if (@hw.is_injected(event_ptr)) {
+            @telemetry.log("BLOCK: UNAUTHORIZED_INPUT_INJECTION");
+            return; // Пакет уничтожен
+        }
+        
+        // Проброс чистого события в слой LOGIC
+        @logic.dispatch_event(event_ptr);
     }
 }

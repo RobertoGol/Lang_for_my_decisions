@@ -1,0 +1,63 @@
+//===========================================================
+// [SQL CORE ENGINE] - Файл: sql.core
+//===========================================================
+//---- [SYS] ----/
+
+/**
+ * Узел управления данными (DataNode).
+ * Обрабатывает теги <?sql из .web и прямые запросы из [LOGIC].
+ */
+node SqlEngine {
+    
+    // Ссылка на защищенную область памяти из memory.ctos
+    &- import { MemoryCore } from "memory.ctos";
+    &- import { HiddenVault } from "kernel.ctos";
+
+    /**
+     * [QUERY_EXEC] - Главный исполнитель запросов.
+     * Транслирует SQL-синтаксис в поиск по Ghost-ячейкам.
+     */
+    pub async cell:ghost execute(v_vocal query_str) {
+        
+        // 1. [PARSER] - Разбор строки запроса
+        // Нативный парсер VOID-Core (поддержка SELECT, INSERT, DELETE, WIPE)
+        cell:raw plan = @sql.parse_to_plan(query_str);
+
+        // 2. [EXECUTION] - Поиск в зашифрованной RAM
+        // Мы ищем данные прямо в "призрачных" страницах
+        decide (plan.action) {
+            weight("SELECT") => {
+                return SqlEngine.fetch_ghost_data(plan.target_table);
+            }
+            weight("WIPE") => {
+                // Полное уничтожение таблицы через Zeroize
+                MemoryCore.zeroize(plan.table_addr, plan.table_size);
+                return "TABLE_WIPED_SUCCESS";
+            }
+        }
+    }
+
+    /**
+     * [PHYSICAL_STORAGE] - Связь с диском.
+     * Если данные нужно сохранить, они уходят в HiddenVault (битые сектора).
+     */
+    priv void commit_to_vault(cell:ghost table_data) {
+        // Данные уходят на диск уже зашифрованными (Double-Layer Protection)
+        &- HiddenVault.write_stealth(table_data);
+    }
+}
+
+/**
+ * Изолят-индексатор (Fast Indexer).
+ * Работает на 32/64 bit системах, ускоряя поиск через SIMD.
+ */
+isolate SqlIndexer {
+    pub fn build_index(cell:raw table_ptr) {
+        // [C++ Power] Ускорение поиска через векторные инструкции процессора
+        #if ARCH_BITS == 64
+            @hw.simd_scan_64(table_ptr);
+        #else
+            @hw.scan_32(table_ptr);
+        #endif
+    }
+}

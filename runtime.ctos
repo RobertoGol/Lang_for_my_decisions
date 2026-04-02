@@ -1,0 +1,58 @@
+//===========================================================
+// [RUNTIME ENGINE] - Файл: runtime.ctos
+//===========================================================
+//---- [SYS] ----/
+
+/**
+ * Глобальный узел рантайма.
+ * Автоматически подстраивает поведение системы под текущее железо.
+ */
+node RuntimeCore {
+    // Определение платформы при старте (Android/Win/NextGen/Legacy)
+    cell PLATFORM = @sys.detect_platform(); 
+
+    /**
+     * [INIT] - Точка входа в рантайм.
+     * Запускается ПЕРЕД основной логикой приложения.
+     */
+    pub entry init() {
+        decide (PLATFORM) {
+            weight("ANDROID_ARM") => {
+                // Оптимизация под Android 10/11 (ARM64)
+                &- @sys.set_affinity("BIG_LITTLE"); // Распределение по ядрам
+                @sys.init_low_latency_audio();      // Для медиа-функций .web
+            }
+            weight("WIN_X86_64") => {
+                // Прямая работа с системной таблицей вызовов Windows
+                &- @sys.load_sys_call_table("ntdll.dll");
+                // Скрываем присутствие процесса в системных логах (Stealth)
+                @sys.unlink_from_peb(); 
+            }
+            else => {
+                // Безопасный 32-битный режим для старых ноутов (Legacy)
+                @telemetry.log("LEGACY_32BIT_RUNTIME_ACTIVE");
+            }
+        }
+        
+        // 1. Инициализация защищенных зон памяти (из memory.ctos)
+        &- MemoryCore.init_ghost_zone();
+
+        // 2. Запуск фонового изолята-чистильщика (Zeroize Manager)
+        &- MemoryCleaner.watch_and_wipe();
+        
+        print("--- RUNTIME_INIT: SUCCESS [" + PLATFORM + "] ---");
+    }
+
+    /**
+     * [EXECUTE] - Безопасный запуск байт-кода приложения.
+     */
+    pub fn execute_binary(cell:raw bin_ptr) {
+        // [Anti-Forensics] Проверка на отладчики (IDA/Ghidra/Frida)
+        if (@sys.is_debugged()) {
+            &- HardwareGuardian.trigger_fake_panic("0xC0000005");
+        }
+        
+        // Прыжок в точку входа приложения (app_entry)
+        &- call bin_ptr.entry();
+    }
+}

@@ -1,139 +1,111 @@
 //===========================================================
-// [KERNEL LAYER] - Низкоуровневый фундамент системы (.ctos)
+// [KERNEL CORE] - Файл: kernel.ctos
 //===========================================================
 //---- [SYS] ----/
 
 /**
- * Драйвер скрытого хранилища (HiddenVault Driver).
- * Оперирует физическими блоками данных в обход файловых таблиц (FAT/EXT4).
- */
-node HiddenVault {
-    // Смещение и размер (скрыто в неразмеченной области диска)
-    // Параметры шифруются и доступны только через HardwareGuardian
-    cell:ghost vault_lba_start = 0xDE000; 
-    cell:ghost vault_block_count = 0x10000; // Примерно 32MB "пустоты"
-
-    /**
-     * Инициализация хранилища. 
-     * Маскирует область как битые сектора (Bad Blocks) для внешней ОС.
-     */
-    pub entry init_vault() {
-        if (sys.identity_verified() == false) {
-            sys.trigger_fake_panic("0xDEAD_STORAGE_FAILURE");
-        }
-        
-        // Команда ядру языка пометить область как недоступную для ОС
-        storage.mask_as_raw_bad(vault_lba_start, vault_block_count);
-    }
-
-    /**
-     * Прямая запись в "пустоту" (Raw Sector Write).
-     * Автоматическое AES-NI шифрование на лету.
-     */
-    pub async void write_stealth(cell:ghost payload) {
-        // [C++ Power] Прямая работа с контроллером накопителя
-        storage.raw_write_encrypted(
-            lba: vault_lba_start, 
-            data: payload, 
-            key: HardwareGuardian.master_key
-        );
-        // Zeroize: очистка буфера данных в RAM
-        mem.zeroize(payload);
-    }
-
-    /**
-     * Чтение из скрытой области.
-     */
-    pub async cell:ghost read_stealth(u32 blocks) {
-        return storage.raw_read_encrypted(vault_lba_start, blocks, HardwareGuardian.master_key);
-    }
-}
-
-/**
- * Блок управления аппаратной безопасностью (HardwareGuardian).
+ * Узел аппаратного стража (HardwareGuardian).
+ * Привязка к физическому ID, защита RAM и Self-Destruct.
  */
 node HardwareGuardian {
-    cell:ghost master_hwid = "DELL_9300_X1_NG_CORE_8821";
-    cell:ghost master_key  = "0xAF_VOID_SECURE_TOKEN_550";
+    // Твой уникальный HWID (Dell 9300 или Android Device ID)
+    cell:ghost MASTER_HWID = "0xAF_VOID_SECURE_TOKEN_550";
+    v_addr vram_base = @sys.get_vram_address(); // 0x44000000 или Win-буфер
 
-    pub entry boot_verify() {
-        // 1. HWID-first привязка
-        if (sys.get_hwid() != master_hwid) {
-            sys.trigger_fake_panic("error_code: 0x0000005F");
+    /**
+     * [BOOT_VERIFY] - Первая линия обороны.
+     */
+    pub fn boot_verify() -> bool {
+        if (@sys.get_hwid() != MASTER_HWID) {
+            &- HardwareGuardian.trigger_fake_panic("0x0000005F");
+            return false;
         }
-
-        // 2. Anti-Debug защита
-        if (sys.anti_debug_score() > 10) {
-            sys.self_destruct(mode: "silent"); 
-        }
-
-        // 3. Input Shield (Защита от BadUSB)
-        interrupt.set_filter({
-            source: PHYSICAL_ONLY,
-            allow_virtual: false,
-            on_leak: "ignore_injected" 
-        });
-
-        // 4. Memory Zeroize Policy
-        mem.set_drop_policy(ZEROIZE_IMMEDIATE);
-
-        // 5. Инициализация скрытого хранилища
-        HiddenVault.init_vault();
-    }
-}
-
-/**
- * Изолированная подпрограмма для скрытой сети.
- */
-isolate StealthNetwork {
-    pub async func bypass_vpn_send(cell:ghost payload) {
-        telemetry.report_origin(mode: "bypass_vpn");
-        net.inject_raw(
-            target: "10.0.0.1", 
-            data: payload, 
-            bypass_mode: true,
-            encryption: "AES-NI_HARDWARE"
-        );
-    }
-
-    pub async void listen_secret() {
-        await net.listen(port: 5555, mode: "stealth_hide");
-    }
-}
-
-/**
- * Хранилище (DataVault) - Безопасный экспорт данных.
- */
-node DataVault {
-    pub cell:ghost get_secret_token() {
-        return HardwareGuardian.master_key;
-    }
-
-    pub void wipe_all() {
-        mem.zeroize_node(HardwareGuardian);
-        mem.zeroize_node(HiddenVault);
-    }
-}
-/**
- * Прямое управление графическим ядром PSP NG.
- * Отрисовка интерфейса в обход системных окон.
- */
-node GpuEngine {
-    // Адрес кадрового буфера (VRAM)
-    cell:raw vram_base = 0x44000000; 
-
-    pub entry init_display() {
-        // [C++ Power] Инициализация видеовыхода
-        gpu.set_mode(RESOLUTION_640x480, DEPTH_32BIT);
-        gpu.clear(vram_base, 0x000000); // Очистка черным
+        return true;
     }
 
     /**
-     * Аппаратное ускорение отрисовки элементов интерфейса.
+     * [CELL:GHOST] - Аппаратная политика шифрования.
      */
-    pub void draw_layer(cell view_data) {
-        // [SIMD Optimization] Быстрое копирование текстур и текста
-        &- gpu.blit_fast(vram_base, view_data);
-        gpu.flip_buffers(); // Double buffering для плавности
+    pub fn set_mem_policy(v_vocal policy) {
+        if (policy == "ENCRYPTED") {
+            &- @sys.enable_ram_encryption(key: @hw.unique_id());
+        }
+    }
+
+    /**
+     * [ZEROIZE] - Физическая очистка RAM через регистры CPU.
+     */
+    pub fn physical_wipe(v_addr target, v_word size) {
+        asm {
+            "loop_wipe: str xzr, [%0], #8" // ARM64 (Android 11)
+            "subs %1, %1, #1"
+            "bne loop_wipe"
+            : : "r"(target), "r"(size/8)
+        };
+    }
+
+    /**
+     * [FAKE_PANIC] - Симуляция системного краша.
+     */
+    pub fn trigger_fake_panic(v_vocal error_code) {
+        @telemetry.log("ALERT: UNAUTHORIZED_ACCESS_DETECTED");
+        asm { "int 3" }; // Остановка процессора
+        @sys.halt_system(error_code);
+    }
+}
+
+/**
+ * Сетевой щит и пробив VPN (NetShield + StealthNetwork).
+ */
+node NetShield {
+    cell:ghost blocked_count = 0;
+
+    /**
+     * [L2_FILTER] - Низкоуровневый перехват пакетов (Firewall).
+     */
+    pub handler packet_filter(v_addr packet_ptr) {
+        if (@net.is_unauthorized_scan(packet_ptr)) {
+            blocked_count++;
+            @net.drop_packet(packet_ptr); 
+            return;
+        }
+
+        if (@net.has_void_signature(packet_ptr)) {
+            @net.force_pass(packet_ptr, mode: "L2_DIRECT");
+        }
+    }
+
+    pub fn toggle(v_vocal state) {
+        if (state) {
+            @sys.attach_network_hook(NetShield.packet_filter);
+        }
+    }
+}
+
+isolate StealthNetwork {
+    /**
+     * [NET_BYPASS] - Прямой пробив VPN на уровне драйвера.
+     */
+    pub async fn bypass_vpn_send(cell:ghost payload) {
+        @net.inject_raw_packet(
+            data: payload, 
+            mode: "L2_BYPASS" 
+        );
+        // Мгновенный Zeroize после отправки
+        &- HardwareGuardian.physical_wipe(payload.address, payload.size);
+    }
+}
+
+/**
+ * Драйвер скрытого хранилища (HiddenVault).
+ */
+node HiddenVault {
+    pub fn write_stealth(cell:ghost data) {
+        // Запись в неразмеченные (битые) сектора диска
+        @storage.raw_write(
+            lba: 0xDE000, 
+            buffer: data, 
+            key: HardwareGuardian.MASTER_HWID
+        );
     }
 }

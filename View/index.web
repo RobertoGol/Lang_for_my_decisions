@@ -1,0 +1,62 @@
+//===========================================================
+// [VIEW LAYER] - Файл: index.web
+//===========================================================
+//---- [VIEW] ----/
+
+<html>
+<head>
+    <link rel="stylesheet" href="assets/bootstrap.min.css">
+    <script src="assets/jquery.min.js"></script>
+    <style>
+        body { background: #050505; color: #0f0; font-family: 'Courier New'; }
+        .shield-active { border: 1px solid #0f0; box-shadow: 0 0 10px #0f0; }
+        .ghost-text { color: #00ff41; font-family: 'Terminus', monospace; }
+    </style>
+</head>
+
+<body class="container mt-5">
+    <div class="card bg-dark shield-active mb-4">
+        <div class="card-body">
+            <h1 class="card-title ghost-text">VOID-CORE CONTROL PANEL</h1>
+            <p>Device HWID: <span id="hwid" class="text-white">@sys.get_hwid()</span></p>
+            <p>Architecture: <span id="arch">@sys.bitness()</span> bit</p>
+            
+            <hr class="border-success">
+
+            <!-- [SQL-NATIVE] Прямые запросы к HiddenVault (Ghost-RAM) -->
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="alert alert-info bg-dark text-info border-info">
+                        <strong>Current Secrets:</strong>
+                        <?sql SELECT name, status FROM ghost_table WHERE level > 5; ?>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="alert alert-dark text-success border-success">
+                        <strong>Active High-Level Sessions:</strong>
+                        <?sql SELECT name FROM active_sessions WHERE security_level > 7; ?>
+                    </div>
+                </div>
+            </div>
+
+            <hr class="border-success">
+
+            <div class="btn-group w-100">
+                <button class="btn btn-outline-success" onclick="&- NetShield.toggle(true)">ENABLE STEALTH</button>
+                <button class="btn btn-outline-primary" onclick="&- HardwareGuardian.boot_verify()">VERIFY HW</button>
+                <button class="btn btn-outline-danger" onclick="&- HardwareGuardian.physical_wipe()">ZEROIZE RAM</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function refresh_system_status() {
+            let blocked = await &- NetShield.get_stats();
+            let net_status = await &- StealthNetwork.check_connection();
+            document.title = "VOID: " + net_status;
+            $('#arch').html(@sys.bitness() + " bit | Intercepted: " + blocked);
+        }
+        setInterval(refresh_system_status, 2000);
+    </script>
+</body>
+</html>
