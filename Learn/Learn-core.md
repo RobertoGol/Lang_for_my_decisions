@@ -1,13 +1,13 @@
 Справочник системных сущностей VOID-Core (v2.0: Iron Shield)
 Этот документ описывает физическое устройство данных и механизмы управления ресурсами в архитектуре v2.0.
 1. Универсальный тип cell и его модификаторы
-В v2.0 поведение ячейки (cell) жестко привязано к аппаратному контексту.
-Модификатор	Синтаксис	Слой	Описание (Hardware Context)	Аналог
-Vocal	cell:vocal	[LOGIC]	Открытые данные. Динамическая типизация. ARC-очистка.	Python / JS
-Ghost	cell:ghost	[SYS]	Hardware AES. Расшифровка только в кэше L1/L2. Невидима для дамперов.	VOID-Security
-Firmware	cell:fwr	[SYS]	BIOS-Locked. Привязана к подписи прошивки. Стирается при смене HWID.	TPM / TEE
-Raw	cell:raw	[SYS]	Прямой адрес (Pointer). Работа без проверок.	C++ / B
-Secure	cell:sec	[LOGIC]	Типизированная ячейка с контролем владения (Borrow Checker).	Rust
+    В v2.0 поведение ячейки (cell) жестко привязано к аппаратному контексту.
+    Модификатор	Синтаксис	Слой	Описание (Hardware Context)	Аналог
+    Vocal	cell:vocal	[LOGIC]	Открытые данные. Динамическая типизация. ARC-очистка.	Python / JS
+    Ghost	cell:ghost	[SYS]	Hardware AES. Расшифровка только в кэше L1/L2. Невидима для дамперов.	VOID-Security
+    Firmware	cell:fwr	[SYS]	BIOS-Locked. Привязана к подписи прошивки. Стирается при смене HWID.	TPM / TEE
+    Raw	cell:raw	[SYS]	Прямой адрес (Pointer). Работа без проверок.	C++ / B
+    Secure	cell:sec	[LOGIC]	Типизированная ячейка с контролем владения (Borrow Checker).	Rust
 2. Операторы управления данными (Data Ops)
 
     &- (Bridge) — Прямой системный сигнал из высокоуровневой логики в защищенное ядро.
