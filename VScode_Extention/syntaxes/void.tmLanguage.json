@@ -1,0 +1,13 @@
+{
+  "scopeName": "source.void",
+  "patterns": [
+    { "name": "comment.line.double-slash.void", "match": "//.*" },
+    { "name": "keyword.control.layer.void", "match": "\\[(SYS|LOGIC|VIEW)\\]", "settings": { "foreground": "#F92672" } },
+    { "name": "storage.type.cell.void", "match": "\\bcell(:ghost|:raw|:vocal|:fwr|:sec)?\\b", "settings": { "foreground": "#66D9EF" } },
+    { "name": "keyword.operator.bridge.void", "match": "&-", "settings": { "foreground": "#E6DB74" } },
+    { "name": "keyword.other.move.void", "match": "\\b(move|spawn|isolate|decide|weight)\\b", "settings": { "foreground": "#F92672" } },
+    { "name": "entity.name.function.void", "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*(?=\\()", "settings": { "foreground": "#A6E22E" } },
+    { "name": "variable.parameter.void", "match": "(?<=->\\s*)[a-zA-Z_][a-zA-Z0-9_]*", "settings": { "foreground": "#FD971F" } },
+    { "name": "string.quoted.double.void", "begin": "\"", "end": "\"", "settings": { "foreground": "#E6DB74" } }
+  ]
+}

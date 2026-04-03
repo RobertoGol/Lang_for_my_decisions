@@ -1,0 +1,22 @@
+{
+  "name": "void-core-ctos",
+  "displayName": "VOID-Core {Ctos}",
+  "description": "Интеллектуальная поддержка языка VOID-Core с глубоким анализом ошибок",
+  "version": "2.0.0",
+  "publisher": "RobertoGol",
+  "engines": { "vscode": "^1.75.0" },
+  "categories": [ "Programming Languages" ],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [{
+      "id": "voidcore",
+      "extensions": [ ".ctos", ".vc", ".void", ".core", ".run" ],
+      "aliases": [ "VOID-Core {Ctos}", "ctos" ]
+    }],
+    "grammars": [{
+      "language": "voidcore",
+      "scopeName": "source.void",
+      "path": "./syntaxes/void.tmLanguage.json"
+    }]
+  }
+}
