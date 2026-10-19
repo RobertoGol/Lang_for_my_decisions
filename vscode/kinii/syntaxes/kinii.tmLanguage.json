@@ -1,0 +1,176 @@
+{
+    "name": "KINII",
+    "scopeName": "source.kinii",
+    "patterns": [
+        { "include": "#header-marker" },
+        { "include": "#comments" },
+        { "include": "#sql-block" },
+        { "include": "#strings" },
+        { "include": "#numbers" },
+        { "include": "#attributes" },
+        { "include": "#declarations" },
+        { "include": "#types" },
+        { "include": "#keywords" },
+        { "include": "#builtins" },
+        { "include": "#operators" }
+    ],
+    "repository": {
+        "header-marker": {
+            "comment": "Заголовок слоя: //---- [SYS] ----/",
+            "match": "^\\s*//(-*)\\s*\\[.*?\\]\\s*-*\\s*/?\\s*$",
+            "name": "comment.line.banner.kinii"
+        },
+        "comments": {
+            "patterns": [
+                {
+                    "begin": "//",
+                    "end": "$",
+                    "name": "comment.line.double-slash.kinii"
+                }
+            ]
+        },
+        "sql-block": {
+            "comment": "?sql ... ?> — только для слоя .web",
+            "begin": "\\?sql",
+            "beginCaptures": { "0": { "name": "keyword.other.kinii" } },
+            "end": "\\?>",
+            "endCaptures": { "0": { "name": "keyword.other.kinii" } },
+            "contentName": "string.unquoted.embedded.sql.kinii"
+        },
+        "strings": {
+            "patterns": [
+                {
+                    "begin": "\"",
+                    "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.kinii" } },
+                    "end": "\"",
+                    "endCaptures": { "0": { "name": "punctuation.definition.string.end.kinii" } },
+                    "name": "string.quoted.double.kinii",
+                    "patterns": [
+                        {
+                            "match": "\\\\[0-9a-fA-F]{2}",
+                            "name": "constant.character.escape.hex.kinii"
+                        },
+                        {
+                            "match": "\\\\.",
+                            "name": "constant.character.escape.kinii"
+                        }
+                    ]
+                }
+            ]
+        },
+        "numbers": {
+            "patterns": [
+                {
+                    "match": "\\b0[xX][0-9a-fA-F]+\\b",
+                    "name": "constant.numeric.hex.kinii"
+                },
+                {
+                    "match": "\\b\\d+\\b",
+                    "name": "constant.numeric.decimal.kinii"
+                }
+            ]
+        },
+        "attributes": {
+            "comment": "Встроенные операции: @sys.*, @host.*, @console.*",
+            "match": "@(sys|host|console)(\\.[a-zA-Z_][a-zA-Z0-9_]*)+",
+            "captures": {
+                "1": { "name": "support.variable.kinii" }
+            }
+        },
+        "declarations": {
+            "patterns": [
+                {
+                    "comment": "имя функции",
+                    "match": "(?<=fn)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+                    "captures": {
+                        "1": { "name": "entity.name.function.kinii" }
+                    }
+                },
+                {
+                    "comment": "имя структуры или перечисления",
+                    "match": "(?<=struct|enum)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+                    "captures": {
+                        "1": { "name": "entity.name.type.kinii" }
+                    }
+                },
+                {
+                    "comment": "имя перечисления после точки",
+                    "match": "([A-Z][a-zA-Z0-9_]*)\\.([A-Z0-9_]+)",
+                    "captures": {
+                        "1": { "name": "entity.name.type.kinii" },
+                        "2": { "name": "constant.other.enum-member.kinii" }
+                    }
+                }
+            ]
+        },
+        "types": {
+            "patterns": [
+                {
+                    "match": "\\b(list)\\s*<",
+                    "captures": {
+                        "1": { "name": "support.type.kinii" },
+                        "2": { "name": "punctuation.definition.typeparameters.kinii" }
+                    }
+                },
+                {
+                    "match": "\\b(u8|u16|u32|u64|string|bool|ptr|v_word|v_addr)\\b",
+                    "name": "support.type.kinii"
+                },
+                {
+                    "match": "(?<=cell\\:)(raw|ghost|fwr)",
+                    "name": "storage.modifier.kinii"
+                }
+            ]
+        },
+        "keywords": {
+            "patterns": [
+                {
+                    "comment": "объявления",
+                    "match": "\\b(let|const|fn|struct|enum|type|operator)\\b",
+                    "name": "storage.type.kinii"
+                },
+                {
+                    "comment": "слои и узлы",
+                    "match": "\\b(node|isolate|interface|page|app_entry|spawn|tag|asm)\\b",
+                    "name": "keyword.other.kinii"
+                },
+                {
+                    "comment": "управление потоком",
+                    "match": "\\b(if|else|while|loop|for|in|return|break|continue|decide|weight|await|spawn)\\b",
+                    "name": "keyword.control.kinii"
+                },
+                {
+                    "comment": "идентификаторы области видимости",
+                    "match": "\\b(pub|priv|async|import|from|as|entry|handler|move|define|cell)\\b",
+                    "name": "storage.modifier.kinii"
+                },
+                {
+                    "match": "\\b(true|false)\\b",
+                    "name": "constant.language.kinii"
+                }
+            ]
+        },
+        "builtins": {
+            "comment": "Встроенные функции",
+            "match": "\\b(print|len)\\b",
+            "name": "support.function.builtin.kinii"
+        },
+        "operators": {
+            "patterns": [
+                {
+                    "comment": "скобки (для цветизации пар)",
+                    "match": "[\\[\\](){}]",
+                    "name": "punctuation.bracket.kinii"
+                },
+                {
+                    "match": "==|!=|<=|>=|&&|\\|\\||<<|>>|=>|->|\\.",
+                    "name": "keyword.operator.kinii"
+                },
+                {
+                    "match": "[-+*/%<>=&|^~!]",
+                    "name": "keyword.operator.kinii"
+                }
+            ]
+        }
+    }
+}

@@ -1,0 +1,10 @@
+//---- [SYS] ----/
+// Пример импортируемого модуля: простые функции.
+
+fn double_of(x: u32) -> u32 {
+    return x * 2;
+}
+
+pub fn greet(who: string) -> string {
+    return "привет, " + who;
+}

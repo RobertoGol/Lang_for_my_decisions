@@ -1,0 +1,62 @@
+//---- [LOGIC] ----/
+// Проверка семантики и рантайма: если всё честно — exe напечатает OK-строки.
+
+struct Point {
+    x: u32;
+    y: u32;
+}
+
+enum Color { RED, GREEN, BLUE }
+
+fn half(x: u32) -> u32 {
+    return x / 2;
+}
+
+app_entry {
+    let u32 done = 0;
+
+    // логика: && без приколов
+    let flag = (3 > 2) && (1 < 2);
+    if (flag) { done = done + 1; }
+
+    // строка + число
+    print("n=" + 5);
+
+    // длина строки
+    if (len("abcdef") == 6) { print("len OK"); }
+
+    // список и for-in
+    let list<u32> xs = [10, 20, 30];
+    let u32 sum = 0;
+    for v in xs {
+        sum = sum + v;
+    }
+    if (sum == 60) { print("list OK"); done = done + 1; }
+
+    // comprehension после #fold
+    let list<u32> evens = [v for v in xs if v != 20];
+    if (evens[1] == 30) { print("comp OK"); }
+
+    // struct + enum
+    let p = Point { x: 4, y: half(20) };
+    decide (p.y) {
+        weight(10) => { p.x = 99; }
+        else       => { }
+    }
+    let c = Color.GREEN;
+    decide (c) {
+        weight(Color.GREEN) => { print("enum OK"); }
+        else                => { print("enum BAD"); }
+    }
+
+    // while
+    let u32 w = 0;
+    while (w < 3) {
+        w = w + 1;
+        continue;
+        w = 999;
+    }
+    if (w == 3) { print("while OK"); }
+
+    if (done == 2) { print("all OK"); }
+}

@@ -1,0 +1,13 @@
+// Проект examples. Один раз описали — команды работают без аргументов:
+//   kinic check  — проверить всё
+//   kinic opt    — оптимизация с отчётом
+//   kinic build  — собрать exe на каждый entry
+
+files: util.ctos, util2.ctos
+
+entry: demo.vc
+entry: other.vc
+entry: opt_demo.vc
+entry: sem_check.vc
+entry: opt_import.vc
+entry: cs_style.vc

@@ -1,0 +1,116 @@
+{
+    "app_entry": {
+        "prefix": "entry",
+        "body": [
+            "app_entry {",
+            "\t$0",
+            "}"
+        ],
+        "description": "Точка входа приложения"
+    },
+    "fn": {
+        "prefix": "fn",
+        "body": [
+            "fn ${1:name}(${2:a: u32}) -> ${3|u8,u16,u32,u64,string,bool|} {",
+            "\treturn ${4:0};",
+            "}"
+        ],
+        "description": "Функция"
+    },
+    "fn_void": {
+        "prefix": "fnv",
+        "body": [
+            "fn ${1:name}(${2:}) {",
+            "\t$0",
+            "}"
+        ],
+        "description": "Функция без возвращаемого значения"
+    },
+    "let": {
+        "prefix": "let",
+        "body": "let ${1|u8,u16,u32,u64,string,bool|} ${2:name} = ${3:0};",
+        "description": "Переменная с типом"
+    },
+    "const": {
+        "prefix": "const",
+        "body": "const ${1:NAME} = ${2:0};",
+        "description": "Константа"
+    },
+    "struct": {
+        "prefix": "struct",
+        "body": [
+            "struct ${1:Name} {",
+            "\t${2:field}: ${3|u8,u16,u32,u64,string,bool|};",
+            "}"
+        ],
+        "description": "Структура"
+    },
+    "enum": {
+        "prefix": "enum",
+        "body": ["enum ${1:Name} { ${2:Item0}, ${3:Item1} }"],
+        "description": "Перечисление"
+    },
+    "if": {
+        "prefix": "if",
+        "body": [
+            "if (${1:условие}) {",
+            "\t$0",
+            "} else {",
+            "\t",
+            "}"
+        ],
+        "description": "Условие"
+    },
+    "while": {
+        "prefix": "while",
+        "body": [
+            "while (${1:условие}) {",
+            "\t$0",
+            "}"
+        ],
+        "description": "Цикл while"
+    },
+    "forin": {
+        "prefix": "for",
+        "body": [
+            "for ${1:item} in ${2:sписок} {",
+            "\t$0",
+            "}"
+        ],
+        "description": "Цикл по списку"
+    },
+    "decide": {
+        "prefix": "decide",
+        "body": [
+            "decide (${1:значение}) {",
+            "\tweight(${2:0}) => { $3 }",
+            "\telse           => { $0 }",
+            "}"
+        ],
+        "description": "Развилка decide/weight"
+    },
+    "listcomp": {
+        "prefix": "comp",
+        "body": "[${1:item} for ${1:item} in ${2:sписок} if ${3:условие}]",
+        "description": "Построение списка с фильтром"
+    },
+    "import": {
+        "prefix": "imp",
+        "body": "import \"${1:модуль.ctos}\";",
+        "description": "Импорт файла"
+    },
+    "layer": {
+        "prefix": "layer",
+        "body": "//---- [${1|SYS,LOGIC,VIEW|}] ----/",
+        "description": "Заголовок слоя"
+    },
+    "pubfn": {
+        "prefix": "pubfn",
+        "body": [
+            "pub fn ${1:name}(${2:a: u32}) -> ${3:u32} {",
+            "\treturn ${4:0};",
+            "}"
+        ],
+        "description": "Экспортируемая функция"
+    }
+}

@@ -1,0 +1,8 @@
+//---- [LOGIC] ----/
+// Как в C#: файлы проекта видят друг друга сами — import не нужен.
+
+app_entry {
+    let u32 doubled = double_of(21);
+    print(doubled);
+    print(greet("без import"));
+}

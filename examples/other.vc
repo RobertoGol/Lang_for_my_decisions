@@ -1,0 +1,6 @@
+//---- [LOGIC] ----/
+import "util2.ctos";
+
+app_entry {
+    print(triple_of(9));
+}

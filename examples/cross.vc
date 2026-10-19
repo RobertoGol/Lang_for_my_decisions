@@ -1,0 +1,16 @@
+//---- [LOGIC] ----/
+// Тест межфайловых диагностик:
+//   greet/double_of — импортированы (ok)
+//   triple_of — есть в util2.ctos, НО не импортирован (K2011)
+//   nosuch.ctos — файла нет (K2012)
+//   greet(1, 2) — не то число аргументов у импортированной функции (K2006)
+
+import "util.ctos";
+import "nosuch.ctos";
+
+app_entry {
+    let a = greet("а");
+    let b = double_of(2);
+    let c = triple_of(3);
+    print(greet(1, 2));
+}

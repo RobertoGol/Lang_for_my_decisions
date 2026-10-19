@@ -1,0 +1,44 @@
+//---- [LOGIC] ----/
+// Демо синтаксиса KINII v3 — понятный и компактный.
+
+import "util.ctos";
+
+struct Point {
+    x: u32;
+    y: u32;
+}
+
+enum DataType { U8, U16, U32, U64 }
+
+fn add(a: u32, b: u32) -> u32 {
+    return a + b;
+}
+
+app_entry {
+    let u32 count = 50;
+    const MAX_RETRY = 3;
+    let msg = "значение: " + count;
+    let flags = true;
+    let list<string> items = ["kernel", "memory"];
+
+    if (count > 10 && flags) {
+        count = count - 1;
+    } else {
+        count = 0;
+    }
+
+    decide (count) {
+        weight(10) => { count = count * 2; }
+        else       => { count = 0; }
+    }
+
+    let p = Point { x: 1, y: 2 };
+    p.x = p.x + MAX_RETRY;
+    p.y = double_of(p.x);
+
+    let active = [i for i in items if i != "memory"];
+
+    print(add(1, 2));
+    print(greet("мир"));
+    print("--- OK: " + msg + " ---");
+}

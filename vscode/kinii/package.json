@@ -1,0 +1,57 @@
+{
+    "name": "kinii-language",
+    "displayName": "KINII Language",
+    "description": "Язык KINII (VOID-Core v3): подсветка синтаксиса, сниппеты, диагностика kinic (LSP)",
+    "version": "0.2.0",
+    "publisher": "kinii",
+    "license": "MIT",
+    "engines": {
+        "vscode": "^1.75.0"
+    },
+    "categories": ["Programming Languages"],
+    "main": "./extension.js",
+    "activationEvents": [
+        "onLanguage:kinii",
+        "onCommand:kinii.restartServer"
+    ],
+    "contributes": {
+        "languages": [
+            {
+                "id": "kinii",
+                "aliases": ["KINII", "kinii"],
+                "extensions": [".vc", ".ctos"],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "kinii",
+                "scopeName": "source.kinii",
+                "path": "./syntaxes/kinii.tmLanguage.json"
+            }
+        ],
+        "snippets": [
+            {
+                "language": "kinii",
+                "path": "./snippets/kinii.json"
+            }
+        ],
+        "commands": [
+            {
+                "command": "kinii.restartServer",
+                "title": "KINII: перезапустить сервер kinic",
+                "category": "KINII"
+            }
+        ],
+        "configuration": {
+            "title": "KINII",
+            "properties": {
+                "kinii.serverPath": {
+                    "type": "string",
+                    "default": "compiler/build/kinic.exe",
+                    "description": "Путь к kinic (абсолютный или от корня рабочей папки). Сервер проверяет код командой 'kinic lsp'."
+                }
+            }
+        }
+    }
+}
