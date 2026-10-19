@@ -681,10 +681,14 @@ function activate(context) {
             void vscode.workspace.applyEdit(we);
         }),
         // Богатый вид подсказок (описание + пример) — наша запись Ctrl+Space.
-        // Ставит флажок ДО вызова провайдера: редактор не путает triggerKind.
-        vscode.commands.registerCommand('kinii.richHints', () => {
+        // Если меню уже открыто, редактор игнорирует ретриггер — поэтому
+        // сначала прячем виджет, затем открываем заново: провайдер обязан
+        // вызваться и съесть флажок богатого вида.
+        vscode.commands.registerCommand('kinii.richHints', async () => {
             richHintNext = Date.now();
-            void vscode.commands.executeCommand('editor.action.triggerSuggest');
+            say('богатые подсказки: Ctrl+Space принят (пересоздаю меню)');
+            await vscode.commands.executeCommand('editor.action.hideSuggest');
+            await vscode.commands.executeCommand('editor.action.triggerSuggest');
         }),
         // Мягкое меню: перевести подтверждение подсказок на Tab/клик,
         // чтобы Enter продолжал печатать код и не принимал меню.
