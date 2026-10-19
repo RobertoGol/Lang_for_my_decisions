@@ -359,6 +359,8 @@ const HINTS = [
 // читаем с кэшем по mtime — на каждый ход печатания лезть в диск не надо.
 // Сорт-группа '1' — ниже статической галереи (у галереи '0').
 
+const projSymCache = new Map(); // путь файла → { mtime, list }
+
 const KINII_KIND_OF = {
     fn: vscode.CompletionItemKind.Function,
     handler: vscode.CompletionItemKind.Function,
