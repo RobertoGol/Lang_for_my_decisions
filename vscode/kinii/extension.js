@@ -271,41 +271,100 @@ function didClose(doc) {
 
 // ---------- мягкое меню-подсказки ----------
 
+// ---------- мягкое меню-подсказки ----------
+
 // Появляется, пока пишешь; работает только как подсказка — можно полностью
 // игнорировать и продолжать печатать. Принять — мышкой или Tab.
-// Идея: gallery «примеров команд» языка + ключевые слова + системные вызовы.
+// Словарь — по SPEC.md: поток, все формы let/типов, контейнеры, библиотека,
+// выражения, слои и директивы. VS Code сам отфильтрует список по набранному
+// префиксу: «wh» → while/weight, «let mas» → массив, «sys» → sys.*.
 const HINTS = [
-    ['let', 'let имя = значение;', 'переменная: let счётчик = 0;'],
-    ['const', 'const ИМЯ = значение;', 'константа, которую нельзя менять: const ПРЕДЕЛ = 100;'],
-    ['fn', 'fn имя(а: u32) -> u32 {\n    return $1;\n}', 'функция: fn двойня(х: u32) -> u32 { return х * 2; }'],
-    ['struct', 'struct Имя {\n    поле: u32;\n}', 'структура (поля через «;»): struct Точка { х: u32; у: u32; }'],
-    ['enum', 'enum Имя { А, Б, В }', 'перечисление: enum Цвет { Красный, Зелёный }'],
-    ['if', 'if (условие) {\n    $1\n} else {\n    $2\n}', 'ветвление: if (r == 4) { sys.exit(4); }'],
-    ['while', 'while (условие) {\n    $1\n}', 'цикл с условием: while (n > 0) { n = n - 1; }'],
-    ['loop', 'loop {\n    $1\n}', 'бесконечный цикл (выход — break)'],
-    ['for', 'for x in xs {\n    $1\n}', 'цикл по коллекции: for x in элементы { print(x); }'],
-    ['decide', 'decide(значение) {\n    weight(вариант) => {\n        $1\n    }\n}', 'честный switch: decide(cmd) { weight("go") => {...} }'],
-    ['print', 'print(${1:a}, ${2:b});', 'печать в консоль: print("привет:", имя);'],
-    ['return', 'return ${1:значение};', 'возврат из функции'],
+    // --- управление потоком ---
+    ['if', 'if (${1:условие}) {\n    $2\n} else {\n    $3\n}',
+     'ветвление: if (r == 4) { sys.exit(4); }'],
+    ['while', 'while (${1:условие}) {\n    $2\n}',
+     'цикл с условием: while (n > 0) { n = n - 1; }'],
+    ['loop', 'loop {\n    $1\n}',
+     'бесконечный цикл (выход — break)'],
+    ['for', 'for ${1:x} in ${2:xs} {\n    $3\n}',
+     'цикл по списку: for x in пакеты { print(x); }'],
+    ['return', 'return ${1:0};', 'возврат из функции'],
     ['break', 'break;', 'выход из ближайшего цикла (работает и внутри decide)'],
     ['continue', 'continue;', 'следующий шаг цикла'],
-    ['node', 'node Имя {\n    fn функция() -> u32 {\n        return ${1:3};\n    }\n\n    $2\n}', 'узел: свои функции и инструкции-поток, стартует при запуске'],
-    ['isolate', 'isolate Имя {\n    ${1:let warmed = 0; ...}\n}', 'изолят: задача, живущая параллельно с app_entry'],
-    ['app_entry', 'app_entry {\n    $1\n}', 'точка входа программы'],
-    ['import', 'import "${1:файл.ctos}";', 'в явном виде — необязательно: с project.kinii всё видно'],
-    ['sys.exit', 'sys.exit(${1:4});', 'честный код выхода (как в C): 0 — успех'],
-    ['sys.time.now', 'sys.time.now()', 'время в миллисекундах'],
-    ['sys.rnd.next', 'sys.rnd.next(${1:максимум})', 'случайное число до максимума'],
+    ['decide', 'decide(${1:значение}) {\n    weight(${2:"вариант"}) => {\n        $3\n    }\n    else => {\n        $4\n    }\n}',
+     'честный switch: decide(cmd) { weight("go") => {...} else => {...} }'],
+    ['weight', 'weight(${1:"вариант"}) => { $2 }',
+     'ветка decide: weight(2) => { break; }'],
+
+    // --- переменные и типы ---
+    ['let', 'let ${1:имя} = ${2:0};', 'переменная, тип выводится сам: let счётчик = 0;'],
+    ['let u32', 'let u32 ${1:имя} = ${2:0};', 'переменная с явным типом'],
+    ['let массив', 'let u32[${1:1024}] ${2:имя};', 'массив фиксированной длины: let u32[1024] имя;'],
+    ['let list', 'let list<string> ${1:имя} = [${2:"a"}];', 'динамический список: list<string>'],
+    ['let ptr', 'let ${1:имя}: ptr = 0x11000000;', 'указатель — адрес пишется как 0x-число'],
+    ['cell', 'let cell ${1:имя} = ${2:0};', 'ячейка (= cell:vocal): универсальное поле'],
+    ['cell:raw', 'let cell: raw ${1:имя} = 0x1000;', 'прямой адрес без проверок (как C++ pointer)'],
+    ['const', 'const ${1:ИМЯ} = ${2:0};', 'константа (обязательно со значением): const МАКС = 3;'],
+
+    // --- функции ---
+    ['fn', 'fn ${1:имя}(${2:а: u32}) -> u32 {\n    return $3;\n}',
+     'функция: fn двойня(х: u32) -> u32 { return х * 2; }'],
+    ['pub fn', 'pub fn ${1:имя}(${2:а: u32}) -> u32 {\n    return $3;\n}',
+     'публичная функция (видна всем)'],
+    ['async fn', 'async fn ${1:имя}() {\n    $0\n}',
+     'async-функция (разбирается, пока работает как обычная)'],
+    ['handler', 'handler ${1:имя}(событие: ptr) {\n    $0\n}', 'обработчик прерывания'],
+    ['entry', 'entry ${1:boot}() {\n    $2\n}', 'точка входа (альтернативная)'],
+
+    // --- структуры и перечисления ---
+    ['struct', 'struct ${1:Имя} {\n    ${2:поле}: u32;\n}',
+     'структура (поля через «;»): struct Точка { х: u32; у: u32; }'],
+    ['enum', 'enum ${1:Имя} { ${2:Первый}, ${3:Второй} }', 'перечисление значений'],
+    ['import', 'import "${1:файл.ctos}";', 'явный импорт (с project.kinii — необязательно)'],
+
+    // --- контейнеры верхнего уровня ---
+    ['app_entry', 'app_entry {\n    $1\n}', 'точка входа приложения (ровно один на проект)'],
+    ['node', 'node ${1:Имя} {\n    fn ${2:функция}() -> u32 {\n        return ${3:3};\n    }\n\n    $4\n}',
+     'узел: свои функции (видны проекту) и инструкции-поток'],
+    ['isolate', 'isolate ${1:Имя} {\n    let ${2:готово} = 0;\n    while (${3:условие}) {\n        $4\n    }\n}',
+     'изолят: задача, живущая параллельно с app_entry'],
+
+    // --- встроенная библиотека ---
+    ['print', 'print(${1:"текст"}, ${2:значение});',
+     'печать в консоль (аргументов сколько нужно): print("привет:", имя);'],
+    ['len', 'len(${1:список_или_строка})', 'длина списка/строки'],
     ['console.print', 'console.print(${1:a}, ${2:b});', 'то же, что print — имя для [SYS]-слоя'],
-    ['console.read_input', 'console.read_input()', 'прочитать строку с клавиатуры'],
+    ['console.read_input', 'console.read_input(${1:"подсказка"})', 'прочитать строку; подсказка печатается перед вводом'],
+    ['console.read_line', 'console.read_line()', 'прочитать строку без подсказки'],
+    ['sys.exit', 'sys.exit(${1:0});', 'код выхода: 0 — успех, как в C'],
+    ['sys.time.now', 'sys.time.now()', 'время в миллисекундах (u64)'],
+    ['sys.rnd.next', 'sys.rnd.next(${1:максимум})', 'случайное число 0..максимум-1'],
+
+    // --- выражения ---
+    ['listlit', '[${1:"a"}, ${2:"b"}]', 'список: ["a", "b"]'],
+    ['structlit', '${1:Имя} { ${2:поле}: ${3:0} }', 'литерал структуры: Точка { х: 5, у: 7 }'],
+    ['comprehension', '[${1:x} for ${1:x} in ${2:xs} if ${3:условие}]',
+     'построение списка с фильтром: [i for i in items if i != "x"]'],
+    ['ternary', '${1:cond} ? ${2:да} : ${3:нет}', 'тернарник: cond ? a : b'],
+
+    // --- слои и директивы ---
+    ['layer', '//---- [${1|SYS,LOGIC,VIEW|}] ----/', 'заголовок слоя'],
+    ['#if', '#if ${1:условие}\n$2\n#endif', 'директива компилятора'],
 ];
 
 function provideSoftHints(doc, pos) {
     // Выключаемо настройкой kinii.hints.
-    if (!vscode.workspace.getConfiguration('kinii').get('hints', true)) return null;
+    if (!vscode.workspace.getConfiguration('kinii').get('hints', true)) {
+        say('подсказки: выключены настройкой kinii.hints');
+        return null;
+    }
     // Не подсказываем внутри комментария.
     const before = doc.getText(new vscode.Range(new vscode.Position(pos.line, 0), pos));
     if (before.lastIndexOf('//') >= 0) return null;
+    // Лог: какие префиксы приходят (доказательство для отладки меню).
+    const prefix = before.slice(-Math.max(before.length, 8)).trimEnd();
+    const m = /[A-Za-zА-Яа-яЁё0-9_]+$/.exec(prefix);
+    say(`подсказки: запрос на префиксе '${m ? m[0] : ''}'`);
     return HINTS.map(([label, snippet, detail]) => {
         const it = new vscode.CompletionItem(label, vscode.CompletionItemKind.Snippet);
         it.insertText = new vscode.SnippetString(snippet);
@@ -345,6 +404,7 @@ function formatDocument(edit) {
 function activate(context) {
     collection = vscode.languages.createDiagnosticCollection('kinic');
     context.subscriptions.push(collection);
+    say('kinii extension 0.3.0: активация, регистрирую провайдеры hover/hints/fmt');
 
     context.subscriptions.push(
         vscode.workspace.onDidOpenTextDocument((d) => { if (d.languageId === 'kinii') didOpen(d); }),
