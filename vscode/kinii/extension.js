@@ -438,7 +438,14 @@ async function refreshProjectSymbols(doc) {
     } catch (e) {
         say('свои имена: каталог не прочёлся — ' + (e && e.message ? e.message : e));
     }
+    // Лог прогрева — только когда число файлов реально изменилось.
+    if (projSymCache.size !== projCacheLogged) {
+        projCacheLogged = projSymCache.size;
+        say(`свои имена: прогрето файлов ${projCacheLogged}`);
+    }
 }
+
+let projCacheLogged = -1;
 
 // Синхронный сбор имен: буфер + уже прогретый кэш соседей (без ожиданий).
 // Фон-пополнение помечаем как fire-and-forget: ОБЕЩАНИЕ НЕ ЖДЁМ и ронять не даём.
@@ -469,10 +476,11 @@ function provideSoftHints(doc, pos) {
     // Не подсказываем внутри комментария.
     const before = doc.getText(new vscode.Range(new vscode.Position(pos.line, 0), pos));
     if (before.lastIndexOf('//') >= 0) return null;
-    // Лог: какие префиксы приходят (доказательство для отладки меню).
-    const prefix = before.slice(-Math.max(before.length, 8)).trimEnd();
-    const m = /[A-Za-zА-Яа-яЁё0-9_]+$/.exec(prefix);
-    say(`подсказки: запрос на префиксе '${m ? m[0] : ''}'`);
+    // Свои имена — синхронно из кэша; пополнение фоном к СЛЕДУЮЩЕМУ ходу.
+    const own = collectProjectNames(doc);
+    // Телеметрия меню: слово + сколько чего отдали (смотри Output → KINII).
+    const m = /[A-Za-zА-Яа-яЁё0-9_]+$/.exec(before);
+    say(`подсказки: слово '${m ? m[0] : ''}' | стат ${HINTS.length} + своих ${own.length}, кэш-файлов ${projSymCache.size}`);
     const items = HINTS.map(([label, snippet, detail]) => {
         const it = new vscode.CompletionItem(label, vscode.CompletionItemKind.Snippet);
         it.insertText = new vscode.SnippetString(snippet);
@@ -480,8 +488,7 @@ function provideSoftHints(doc, pos) {
         it.sortText = '0' + label; // примеры — выше обычных имен из файла
         return it;
     });
-    // Свои имена — синхронно из кэша; пополнение фоном к СЛЕДУЮЩЕМУ ходу.
-    for (const n of collectProjectNames(doc)) {
+    for (const n of own) {
         const it = new vscode.CompletionItem(n.name, n.kind);
         it.detail = 'твоё имя · ' + (n.file ? n.file + ':' + n.line : 'этот файл') +
             ' — ' + n.decl;
