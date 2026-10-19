@@ -18,6 +18,11 @@ namespace {
 bool is_cont(unsigned char c) { return (c & 0xC0) == 0x80; }
 bool ident_start(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; }
 bool ident_cont(char c) { return ident_start(c) || (c >= '0' && c <= '9'); }
+
+// Кириллица в именах (как в SPEC: язык понятный — имена читаются по-русски).
+// UTF-8: кириллица кодируется ведущим байтом 0xD0/0xD1 и байтом продолжения.
+bool cyr_start(unsigned char c) { return c == 0xD0 || c == 0xD1; }
+bool cyr_cont(unsigned char c) { return c >= 0x80 && c <= 0xBF; }
 bool is_digit(char c) { return c >= '0' && c <= '9'; }
 bool is_hex(char c) { return is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
 
@@ -97,7 +102,14 @@ Token lex_ident(Lexer& L) {
     SourceLocation b = L.here();
     size_t start = L.pos;
     L.bump(); // первый символ
-    while (ident_cont(L.cur())) L.bump();
+    if (cyr_cont((unsigned char)L.cur())) L.bump(); // его байт продолжения, если имя кириллическое
+    // Продолжение имени: латиница/цифры — по байту, кириллица — по парам байт UTF-8.
+    while (true) {
+        unsigned char lead = (unsigned char)L.cur();
+        if (ident_cont(lead)) { L.bump(); continue; }
+        if (cyr_start(lead) && cyr_cont((unsigned char)L.cur(1))) { L.bump(); L.bump(); continue; }
+        break;
+    }
     std::string text = L.src.substr(start, L.pos - start);
     auto it = kKeywords.find(text);
     Tok t = (it != kKeywords.end()) ? it->second : Tok::Ident;
@@ -318,7 +330,8 @@ std::vector<Token> lex_file(FileId fid, const std::string& src, DiagnosticEngine
         char c = L.cur();
 
         // --- идентификаторы и ключевые слова ---
-        if (ident_start(c)) {
+        // Кириллическая буква тоже начинает имя (ведущий байт 0xD0/0xD1 + продолжение).
+        if (ident_start(c) || (cyr_start((unsigned char)c) && cyr_cont((unsigned char)L.cur(1)))) {
             out.push_back(lex_ident(L));
             continue;
         }
@@ -431,14 +444,14 @@ std::vector<Token> lex_file(FileId fid, const std::string& src, DiagnosticEngine
                         L.bump();
                     }
                     diags.error("K0001", "неизвестный символ '" + run + "'", sp)
-                        .hint("имена — латиницей (a-z, A-Z, _); кириллица — в комментариях и строках")
+                        .hint("имена — латиницей (a-z, A-Z, _) и кириллицей (а-я, Ё); а этот символ и там, и там не место")
                         .emit();
                     out.push_back(L.make(Tok::Unknown, b, std::move(run)));
                     continue;
                 }
                 std::string ch(1, c);
                 diags.error("K0001", "неизвестный символ '" + ch + "'", sp)
-                    .hint("в KINII используются: буквы, цифры, _ и операторы + - * / % = < > ! & | ^ ~ ?")
+                    .hint("в KINII используются: буквы (латиница и кириллица), цифры, _ и операторы + - * / % = < > ! & | ^ ~ ?")
                     .emit();
                 out.push_back(L.make(Tok::Unknown, b, ch));
                 continue;
