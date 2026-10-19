@@ -367,6 +367,11 @@ const SUGGEST_TRIGGER_CHARS = (() => {
     return out;
 })();
 
+// Флажок «следующий вызов провайдера — богатый вид (описание+пример)».
+// Ставится командой kinii.richHints (наша запись Ctrl+Space в keybindings),
+// потому что редактор путает triggerKind при явном вызове.
+let richHintNext = false;
+
 // Второй слой: собственные объявления (fn/let/const/struct/enum/node/isolate)
 // из редактируемого буфера + соседних *.vc/*.ctos файлов каталога. Соседей
 // читаем с кэшем по mtime — на каждый ход печатания лезть в диск не надо.
@@ -496,10 +501,14 @@ function provideSoftHints(doc, pos, ctx) {
     const m = /[A-Za-zА-Яа-яЁё0-9_]+$/.exec(before);
     const word = m ? m[0] : '';
     // Режим вида: Ctrl+Space (Invoke) — широкий список с описанием/примером;
-    // набор буквы-триггером — компактный, чтобы не мешать печатанию кода.
+    // набор буквы-триггером — компактный.
     const INVOKE = (vscode.CompletionTriggerKind && vscode.CompletionTriggerKind.Invoke) || 0;
     const kind = ctx ? ctx.triggerKind : 'нет-ctx';
-    const rich = ctx && ctx.triggerKind === INVOKE;
+    // rich = явный Ctrl+Space ЛИБО моя команда kinii.richHints, повешенная
+    // на Ctrl+Space: она ставит флажок до вызова провайдера — не гадаем,
+    // какой triggerKind решит прислать редактор.
+    const rich = (ctx && ctx.triggerKind === INVOKE) || richHintNext;
+    richHintNext = false;
     // Фильтруем САМИ: доверие фильтру редактора сыграло злую шутку —
     // он в этом окружении показывает список целиком. Префикс предсказуем:
     // только то, что начинается со слова (регистр не важен, кириллица тоже).
@@ -512,17 +521,18 @@ function provideSoftHints(doc, pos, ctx) {
         const it = new vscode.CompletionItem(label, vscode.CompletionItemKind.Snippet);
         it.insertText = new vscode.SnippetString(snippet);
         it.sortText = '0' + label; // примеры — выше обычных имен из файла
-        if (rich) it.detail = 'KINII: ' + detail;
+        it.detail = 'KINII: ' + detail; // строковая подпись в обоих видах
+        if (rich) it.documentation = new vscode.MarkdownString(detail);
         items.push(it);
         ++given;
     }
     for (const n of own) {
         if (!byPrefix(n.name)) continue;
         const it = new vscode.CompletionItem(n.name, n.kind);
+        const where = n.file ? 'файл ' + n.file + ', строка ' + n.line
+                             : 'в этом файле';
+        it.detail = 'твоё имя · ' + where + ' — ' + n.decl;
         if (rich) {
-            const where = n.file ? 'файл ' + n.file + ', строка ' + n.line
-                                 : 'в этом файле';
-            it.detail = 'твоё имя · ' + where + ' — ' + n.decl;
             it.documentation = new vscode.MarkdownString(
                 '```kinii\n' + n.decl + '\n```\n' + where);
         }
@@ -667,6 +677,12 @@ function activate(context) {
             const we = new vscode.WorkspaceEdit();
             we.set(doc.uri, edits);
             void vscode.workspace.applyEdit(we);
+        }),
+        // Богатый вид подсказок (описание + пример) — наша запись Ctrl+Space.
+        // Ставит флажок ДО вызова провайдера: редактор не путает triggerKind.
+        vscode.commands.registerCommand('kinii.richHints', () => {
+            richHintNext = true;
+            void vscode.commands.executeCommand('editor.action.triggerSuggest');
         }),
         // Мягкое меню: перевести подтверждение подсказок на Tab/клик,
         // чтобы Enter продолжал печатать код и не принимал меню.

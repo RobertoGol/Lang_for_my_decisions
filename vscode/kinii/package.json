@@ -53,6 +53,11 @@
                 "command": "kinii.softHints",
                 "title": "KINII: мягкие подсказки — подтверждение Tab/клик (Enter печатает)",
                 "category": "KINII"
+            },
+            {
+                "command": "kinii.richHints",
+                "title": "KINII: подсказки с описанием и примером (богатый вид)",
+                "category": "KINII"
             }
         ],
         "keybindings": [
@@ -61,6 +66,12 @@
                 "command": "acceptSelectedSuggestion",
                 "key": "tab",
                 "when": "suggestWidgetVisible"
+            },
+            {
+                "_note": "Ctrl+Space = наш вызов подсказок с описанием и примером (панель справа). Вешаем сами, потому что родной triggerKind редактор присылает ненадёжно.",
+                "command": "kinii.richHints",
+                "key": "ctrl+space",
+                "when": "editorTextFocus"
             }
         ],
         "configuration": {
