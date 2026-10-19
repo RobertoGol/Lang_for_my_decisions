@@ -213,6 +213,77 @@ function didClose(doc) {
     });
 }
 
+// ---------- мягкое меню-подсказки ----------
+
+// Появляется, пока пишешь; работает только как подсказка — можно полностью
+// игнорировать и продолжать печатать. Принять — мышкой или Tab.
+// Идея: gallery «примеров команд» языка + ключевые слова + системные вызовы.
+const HINTS = [
+    ['let', 'let имя = значение;', 'переменная: let счётчик = 0;'],
+    ['const', 'const ИМЯ = значение;', 'константа, которую нельзя менять: const ПРЕДЕЛ = 100;'],
+    ['fn', 'fn имя(а: u32) -> u32 {\n    return $1;\n}', 'функция: fn двойня(х: u32) -> u32 { return х * 2; }'],
+    ['struct', 'struct Имя {\n    поле: u32;\n}', 'структура (поля через «;»): struct Точка { х: u32; у: u32; }'],
+    ['enum', 'enum Имя { А, Б, В }', 'перечисление: enum Цвет { Красный, Зелёный }'],
+    ['if', 'if (условие) {\n    $1\n} else {\n    $2\n}', 'ветвление: if (r == 4) { sys.exit(4); }'],
+    ['while', 'while (условие) {\n    $1\n}', 'цикл с условием: while (n > 0) { n = n - 1; }'],
+    ['loop', 'loop {\n    $1\n}', 'бесконечный цикл (выход — break)'],
+    ['for', 'for x in xs {\n    $1\n}', 'цикл по коллекции: for x in элементы { print(x); }'],
+    ['decide', 'decide(значение) {\n    weight(вариант) => {\n        $1\n    }\n}', 'честный switch: decide(cmd) { weight("go") => {...} }'],
+    ['print', 'print(${1:a}, ${2:b});', 'печать в консоль: print("привет:", имя);'],
+    ['return', 'return ${1:значение};', 'возврат из функции'],
+    ['break', 'break;', 'выход из ближайшего цикла (работает и внутри decide)'],
+    ['continue', 'continue;', 'следующий шаг цикла'],
+    ['node', 'node Имя {\n    fn функция() -> u32 {\n        return ${1:3};\n    }\n\n    $2\n}', 'узел: свои функции и инструкции-поток, стартует при запуске'],
+    ['isolate', 'isolate Имя {\n    ${1:let warmed = 0; ...}\n}', 'изолят: задача, живущая параллельно с app_entry'],
+    ['app_entry', 'app_entry {\n    $1\n}', 'точка входа программы'],
+    ['import', 'import "${1:файл.ctos}";', 'в явном виде — необязательно: с project.kinii всё видно'],
+    ['sys.exit', 'sys.exit(${1:4});', 'честный код выхода (как в C): 0 — успех'],
+    ['sys.time.now', 'sys.time.now()', 'время в миллисекундах'],
+    ['sys.rnd.next', 'sys.rnd.next(${1:максимум})', 'случайное число до максимума'],
+    ['console.print', 'console.print(${1:a}, ${2:b});', 'то же, что print — имя для [SYS]-слоя'],
+    ['console.read_input', 'console.read_input()', 'прочитать строку с клавиатуры'],
+];
+
+function provideSoftHints(doc, pos) {
+    // Выключаемо настройкой kinii.hints.
+    if (!vscode.workspace.getConfiguration('kinii').get('hints', true)) return null;
+    // Не подсказываем внутри комментария.
+    const before = doc.getText(new vscode.Range(new vscode.Position(pos.line, 0), pos));
+    if (before.lastIndexOf('//') >= 0) return null;
+    return HINTS.map(([label, snippet, detail]) => {
+        const it = new vscode.CompletionItem(label, vscode.CompletionItemKind.Snippet);
+        it.insertText = new vscode.SnippetString(snippet);
+        it.detail = 'KINII: ' + detail;
+        it.sortText = '0' + label; // примеры — выше обычных имен из файла
+        return it;
+    });
+}
+
+// ---------- форматтер (встроенный kinic fmt) ----------
+
+function formatDocument(edit) {
+    const doc = edit.document;
+    if (!server && !resolveKinic()) return [];
+    const kinic = resolveKinic();
+    if (!kinic) return [];
+    // Работаем через временный файл: kinic fmt читает файл и печатает в stdout.
+    const tmp = path.join(require('os').tmpdir(), 'kinii_fmt_' + path.basename(doc.uri.fsPath));
+    try { fs.writeFileSync(tmp, doc.getText(), 'utf8'); } catch (e) { return []; }
+    return new Promise((resolve) => {
+        const proc = spawn(kinic, ['fmt', tmp], { windowsHide: true });
+        let out = '';
+        proc.stdout.on('data', (d) => (out += d.toString('utf8')));
+        proc.on('exit', () => {
+            try { fs.unlinkSync(tmp); } catch (e) {}
+            // форматтер не судит: если вернул исходник (ошибки разбора) — не трогаем
+            if (!out || out === doc.getText()) { resolve([]); return; }
+            const end = doc.positionAt(doc.getText().length);
+            resolve([new vscode.TextEdit(new vscode.Range(new vscode.Position(0, 0), end), out)]);
+        });
+        proc.on('error', () => { try { fs.unlinkSync(tmp); } catch (e) {} resolve([]); });
+    });
+}
+
 // ---------- активация ----------
 
 function activate(context) {
@@ -223,8 +294,7 @@ function activate(context) {
         vscode.workspace.onDidOpenTextDocument((d) => { if (d.languageId === 'kinii') didOpen(d); }),
         vscode.languages.registerHoverProvider('kinii', {
             // Подсказка под строкой: навёл/поставил курсор на имя — сервер
-            // отвечает сигнатурой и местом объявления. Никаких выпадающих
-            // списков автодополнения — они не нужны.
+            // отвечает сигнатурой и местом объявления.
             provideHover(doc, pos) {
                 return request('textDocument/hover', {
                     textDocument: { uri: doc.uri.toString() },
@@ -241,6 +311,17 @@ function activate(context) {
                 });
             },
         }),
+        // Мягкое меню-подсказок: пока пишешь — всплывает галерея примеров;
+        // мешать не может: игнорируй и продолжай печатать. Принять — по Tab
+        // или кликом (Enter-подтверждение командой «kinii.softHints»).
+        vscode.languages.registerCompletionItemProvider('kinii', {
+            provideCompletionItems: provideSoftHints,
+        }),
+        // Форматтер: Shift+Alt+F / команда «kinii.fmt» / форматирование при
+        // сохранении, если включено editor.formatOnSave.
+        vscode.languages.registerDocumentFormattingEditProvider('kinii', {
+            provideDocumentFormattingEdits: formatDocument,
+        }),
         vscode.workspace.onDidChangeTextDocument((e) => {
             if (e.document.languageId === 'kinii') didChange(e.document);
         }),
@@ -249,6 +330,26 @@ function activate(context) {
             stopServer();
             for (const uri of openDocs.keys()) collection.delete(vscode.Uri.parse(uri));
             openDocs.clear();
+        }),
+        // Форматировать открытый файл (Shift+Alt+F делает то же).
+        vscode.commands.registerCommand('kinii.fmt', async () => {
+            const doc = vscode.window.activeTextEditor?.document;
+            if (!doc || doc.languageId !== 'kinii') { void 0; return; }
+            const edits = await formatDocument(doc);
+            const we = new vscode.WorkspaceEdit();
+            we.set(doc.uri, edits);
+            void vscode.workspace.applyEdit(we);
+        }),
+        // Мягкое меню: перевести подтверждение подсказок на Tab/клик,
+        // чтобы Enter продолжал печатать код и не принимал меню.
+        vscode.commands.registerCommand('kinii.softHints', async () => {
+            const cfg = vscode.workspace.getConfiguration('editor');
+            const cur = cfg.get('acceptSuggestionOnEnter', 'on');
+            const next = cur === 'off' ? 'on' : 'off';
+            await cfg.update('acceptSuggestionOnEnter', next, vscode.ConfigurationTarget.Workspace);
+            vscode.window.showInformationMessage(next === 'off'
+                ? 'KINII: подсказки принимаются Tab/кликом; Enter печатает дальше'
+                : 'KINII: подсказки снова принимаются и Enter тоже');
         }),
     );
 

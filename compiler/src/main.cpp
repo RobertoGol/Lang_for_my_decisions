@@ -14,6 +14,7 @@
 #include "kinii/codegen.h"
 #include "kinii/diagnostic.h"
 #include "kinii/driver.h"
+#include "kinii/fmt.h"
 #include "kinii/lexer.h"
 #include "kinii/optimizer.h"
 #include "kinii/parser.h"
@@ -142,11 +143,41 @@ void print_help(std::ostream& os) {
        << "  kinic opt <файлы...>      оптимизировать с отчётом «что и почему»\n"
        << "  kinic build <файлы...>    собрать exe: [-o имя] (g++ внутри)\n"
        << "  kinic lsp                 языковой сервер для VS Code (stdio)\n"
+       
+"  kinic fmt <files...>      format: print to stdout; with -i -- in place\n"
    << "  kinic version             версия компилятора\n"
        << "\n"
        << "Флаги:\n"
        << "  --no-color                отключить цвета (иначе: авто)\n"
        << "  --color                   включить цвета принудительно\n";
+}
+
+// Форматтер: при inplace — пишем на место, иначе печатаем в stdout.
+int cmd_fmt(const std::vector<std::string>& files, bool inplace) {
+    for (const auto& path : files) {
+        std::string src;
+        if (!read_file(path, src)) {
+            std::cerr << "kinic fmt: не могу открыть файл: " << path << "\n";
+            return 2;
+        }
+        kinii::DiagnosticEngine diags;
+        kinii::FileId fid = diags.add_file(path, src);
+        std::string pretty = kinii::format_source(fid, src);
+        if (inplace) {
+            if (pretty != src) {
+                std::ofstream out(path, std::ios::binary);
+                if (!out) {
+                    std::cerr << "kinic fmt: не могу записать файл: " << path << "\n";
+                    return 2;
+                }
+                out << pretty;
+            }
+            std::cout << "отформатировано: " << path << "\n";
+        } else {
+            std::cout << pretty;
+        }
+    }
+    return 0;
 }
 
 int cmd_lex(const std::vector<std::string>& files, bool color) {
@@ -506,6 +537,21 @@ int main(int argc, char** argv) {
             return 2;
         }
         return cmd_build(files, out, color);
+    }
+
+    if (cmd == "fmt") {
+        // -i — писать на место; иначе печатаем в stdout
+        bool inplace = false;
+        std::vector<std::string> files;
+        for (size_t k = 1; k < positional.size(); ++k) {
+            if (positional[k] == "-i") inplace = true;
+            else files.push_back(positional[k]);
+        }
+        if (files.empty()) {
+            std::cerr << "kinic fmt: укажите хотя бы один файл\n";
+            return 2;
+        }
+        return cmd_fmt(files, inplace);
     }
 
     if (cmd == "lsp") {

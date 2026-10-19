@@ -2,7 +2,7 @@
     "name": "kinii-language",
     "displayName": "KINII Language",
     "description": "Язык KINII (VOID-Core v3): подсветка синтаксиса, сниппеты, диагностика kinic (LSP)",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "publisher": "kinii",
     "license": "MIT",
     "engines": {
@@ -12,7 +12,9 @@
     "main": "./extension.js",
     "activationEvents": [
         "onLanguage:kinii",
-        "onCommand:kinii.restartServer"
+        "onCommand:kinii.restartServer",
+        "onCommand:kinii.fmt",
+        "onCommand:kinii.softHints"
     ],
     "contributes": {
         "languages": [
@@ -41,6 +43,16 @@
                 "command": "kinii.restartServer",
                 "title": "KINII: перезапустить сервер kinic",
                 "category": "KINII"
+            },
+            {
+                "command": "kinii.fmt",
+                "title": "KINII: отформатировать файл",
+                "category": "KINII"
+            },
+            {
+                "command": "kinii.softHints",
+                "title": "KINII: мягкие подсказки — подтверждение Tab/клик (Enter печатает)",
+                "category": "KINII"
             }
         ],
         "configuration": {
@@ -50,6 +62,11 @@
                     "type": "string",
                     "default": "compiler/build/kinic.exe",
                     "description": "Путь к kinic (абсолютный или от корня рабочей папки). Сервер проверяет код командой 'kinic lsp'."
+                },
+                "kinii.hints": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Мягкое меню-подсказки во время набора (галерея примеров команд). Подсказку можно игнорировать и просто продолжать печатать; принять — Tab или мышкой."
                 }
             }
         }

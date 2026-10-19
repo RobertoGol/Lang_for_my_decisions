@@ -14,6 +14,8 @@ add_executable(kinic
     src/codegen.cpp
     src/diagnostic.cpp
     src/lsp.cpp
+
+    src/fmt.cpp
 )
 target_include_directories(kinic PRIVATE include)
 

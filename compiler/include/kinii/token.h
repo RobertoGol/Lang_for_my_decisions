@@ -8,7 +8,7 @@ namespace kinii {
 
 enum class Tok : uint8_t {
     // базовые
-    Ident, Number, String, SqlTag, Directive, Bridge, At,
+    Ident, Number, String, SqlTag, Directive, Bridge, At, Comment,
     // ключевые слова
     KwLet, KwConst, KwFn, KwStruct, KwEnum,
     KwNode, KwIsolate, KwInterface, KwPage, KwAppEntry, KwSpawn,

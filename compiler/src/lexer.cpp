@@ -276,7 +276,8 @@ Token lex_sql_tag(Lexer& L, DiagnosticEngine& dg) {
 
 } // namespace
 
-std::vector<Token> lex_file(FileId fid, const std::string& src, DiagnosticEngine& diags) {
+std::vector<Token> lex_file(FileId fid, const std::string& src, DiagnosticEngine& diags,
+                            bool keep_comments) {
     Lexer L{fid, src, diags};
     std::vector<Token> out;
 
@@ -295,7 +296,19 @@ std::vector<Token> lex_file(FileId fid, const std::string& src, DiagnosticEngine
             if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
                 L.bump();
             } else if (c == '/' && L.cur(1) == '/') {
-                while (!L.at_end() && L.cur() != '\n') L.bump();
+                if (keep_comments) {
+                    SourceLocation cb = L.here();
+                    size_t cs = L.pos;
+                    while (!L.at_end() && L.cur() != '\n') L.bump();
+                    Token t;
+                    t.type = Tok::Comment;
+                    t.text = L.src.substr(cs, L.pos - cs);
+                    t.begin = cb;
+                    t.end = L.here();
+                    out.push_back(std::move(t));
+                } else {
+                    while (!L.at_end() && L.cur() != '\n') L.bump();
+                }
             } else if (c == '/' && L.cur(1) == '*') {
                 SourceLocation cb = L.here();
                 L.bump();
@@ -309,6 +322,15 @@ std::vector<Token> lex_file(FileId fid, const std::string& src, DiagnosticEngine
                         break;
                     }
                     L.bump();
+                }
+                if (keep_comments) {
+                    size_t cs = cb.offset;
+                    Token t;
+                    t.type = Tok::Comment;
+                    t.text = L.src.substr(cs, L.pos - cs);
+                    t.begin = cb;
+                    t.end = L.here();
+                    out.push_back(std::move(t));
                 }
                 if (!closed) {
                     Span sp = L.span_of(cb);
@@ -465,6 +487,7 @@ std::vector<Token> lex_file(FileId fid, const std::string& src, DiagnosticEngine
 const char* tok_name(Tok t) {
     switch (t) {
         case Tok::Ident: return "Ident";
+        case Tok::Comment: return "Comment";
         case Tok::Number: return "Number";
         case Tok::String: return "String";
         case Tok::SqlTag: return "SqlTag";
