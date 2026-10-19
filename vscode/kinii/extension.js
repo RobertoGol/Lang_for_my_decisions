@@ -398,10 +398,18 @@ function scanDeclNames(text, fileLabel) {
         const line = raw.replace(/\/\/.*$/, '');
         let m = /^(?:\s*)(pub\s+|async\s+)?(fn|handler|entry|struct|enum|node|isolate)\s+([A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё_0-9]*)/.exec(line);
         if (m) {
+            // Сигнатура для описания: очищенная строка без хвоста тела.
+            let sig = line.trim();
+            if (!/\}\s*$/.test(sig)) {                   // не однострочна
+                const b = sig.indexOf('{');
+                if (b >= 0) sig = sig.slice(0, b);
+            }
+            sig = sig.trim().replace(/;$/, '');
             out.push({
                 name: m[3],
                 kind: KINII_KIND_OF[m[2]] || vscode.CompletionItemKind.Function,
                 decl: (m[1] ? m[1].trim() + ' ' : '') + m[2] + ' ' + m[3],
+                sig,
                 file: fileLabel,
                 line: i + 1,
             });
@@ -424,6 +432,7 @@ function scanDeclNames(text, fileLabel) {
                     name: nm[1],
                     kind: KINII_KIND_OF[m[1]],
                     decl: m[1] + ' ' + nm[1],
+                    sig: line.trim().replace(/;$/, ''),
                     file: fileLabel,
                     line: i + 1,
                 });
@@ -533,10 +542,11 @@ function provideSoftHints(doc, pos, ctx) {
         const it = new vscode.CompletionItem(n.name, n.kind);
         const where = n.file ? 'файл ' + n.file + ', строка ' + n.line
                              : 'в этом файле';
-        it.detail = 'твоё имя · ' + where + ' — ' + n.decl;
+        const body = n.sig || n.decl; // полная сигнатура строки (fn с типами!)
+        it.detail = 'твоё имя · ' + where + ' — ' + body;
         if (rich) {
             it.documentation = new vscode.MarkdownString(
-                '```kinii\n' + n.decl + '\n```\n' + where);
+                '```kinii\n' + body + '\n```\n' + where);
         }
         it.sortText = '1' + n.name;
         items.push(it);
@@ -687,7 +697,7 @@ function activate(context) {
         vscode.commands.registerCommand('kinii.richHints', async () => {
             richHintNext = Date.now();
             say('богатые подсказки: Ctrl+Space принят (пересоздаю меню)');
-            await vscode.commands.executeCommand('editor.action.hideSuggest');
+            await vscode.commands.executeCommand('hideSuggestWidget');
             await vscode.commands.executeCommand('editor.action.triggerSuggest');
         }),
         // Мягкое меню: перевести подтверждение подсказок на Tab/клик,
