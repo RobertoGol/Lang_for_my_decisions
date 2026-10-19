@@ -1,0 +1,70 @@
+// =====================================================================
+// KINII v2.0 - Host Deployment Terminal (deploy_hub.vc)
+// Среда: Хост ПК (Windows / Linux)
+// =====================================================================
+
+import "host.console";
+import "host.usb";
+import "host.net";
+import "compiler.core";
+
+// Точка входа для десктопной утилиты
+@host_entry
+fn main() {
+    console.print("==================================================");
+    console.print(" KINII OS DEPLOYMENT HUB (v2.0) - NATIVE ENVIRONMENT");
+    console.print("==================================================");
+
+    console.print("[*] Инициализация прямого доступа к USB-шине...");
+    
+    // Ищем A10 по Vendor ID (Samsung = 0x04E8)
+    let device = host.usb.scan_bus(0x04E8); 
+    
+    if (device.is_download_mode()) {
+        console.print("[+] Найдено устройство: Galaxy A10 (Odin/Download Mode)");
+    } else {
+        console.print("[-] Устройство не в режиме прошивки. Ожидание...");
+    }
+
+    loop {
+        console.print("\n[ МЕНЮ УПРАВЛЕНИЯ KINII ]");
+        console.print("1. Синхронизировать UI/UX модули (Сеть)");
+        console.print("2. AUTO-FLASH: Сборка + Прошивка A10");
+        console.print("3. Выход");
+        
+        let string choice = console.read_input("kin-cli> ");
+        
+        if (choice == "1") {
+            fetch_ui_packs();
+        } else if (choice == "2") {
+            auto_flash_pipeline(device);
+        } else if (choice == "3") {
+            host.sys.exit(0);
+        }
+    }
+}
+
+fn fetch_ui_packs() {
+    console.print("[*] Поднятие моста для загрузки UI/UX...");
+    let list<string> missing_packs = ["view-core.ctos", "touch-driver.ctos"];
+    
+    for pack in missing_packs {
+        // Качаем через антенну ПК напрямую в папку проекта
+        host.net.download("kinii-repo.local/" + pack, "./modules/" + pack);
+        console.print("   -> [DOWNLOADED] " + pack);
+    }
+}
+
+fn auto_flash_pipeline(device: ptr) {
+    console.print("[*] Запуск сборочного ядра KINII...");
+    
+    // Вызываем наш же компилятор, написанный на нашем языке
+    let ptr final_tar = compiler.build_profile("a10_stealth.prof");
+    
+    console.print("[*] Отправка void_a10.tar.md5 по USB (Bulk-Transfer)...");
+    
+    // Прямая отправка пакетов в телефон без сторонних программ-прошивальщиков
+    host.usb.odin_flash_ap(device, final_tar);
+    
+    console.print("[+] Прошивка завершена. Телефон уходит в ребут на новое ядро.");
+}

@@ -1,0 +1,39 @@
+// =====================================================================
+// KINII v2.0 - Интерфейс Управления (View/rev_engine.web)
+// Фокус: USB-C Сетевой Мост (RNDIS / Ethernet-over-USB)
+// =====================================================================
+
+import "sql.core";
+import "firmware.ctos";
+
+// Декоратор указывает, что это точка входа для внешнего взаимодействия
+@view_node
+fn start_rev_engine() {
+    // 1. Конфигурируем Type-C порт A10 как скрытую сетевую карту,
+    // игнорируя стандарты MTP/ADB, которые ищут обычные системы.
+    sys.usb.set_mode("RNDIS_HIDDEN");
+    
+    let u32 port = 8080;
+    
+    // 2. Поднимаем легковесный TCP-слушатель
+    net.listen(port, fn(request) {
+        
+        // Жесткая проверка токена. Без правильного ключа интерфейс мертв.
+        if (request.token == "MASTER_A10_OVERRIDE") {
+            
+            // Читаем дамп из битых секторов eMMC
+            let ptr vault_data = sql.vault_read_all();
+            
+            // Отправляем чистые данные на ПК
+            return net.response(200, vault_data);
+            
+        } else {
+            // Если кто-то пытается просканировать порты (Nmap и т.д.) - 
+            // моментально блокируем Type-C порт через firmware.ctos
+            sys.hw.block_port(request.device_id);
+            
+            // И симулируем аппаратный сбой чипа
+            sys.fake_panic("ERR_USB_BUS_FATAL");
+        }
+    });
+}
