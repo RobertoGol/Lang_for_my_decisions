@@ -414,22 +414,23 @@ function scanDeclNames(text, fileLabel) {
     return out;
 }
 
+// Прогрев кэша имен: node-fs НАПРЯМУЮ по диску. Через vscode.workspace.fs
+// (VFS редактора) на этом окружении чтение зависает — строка «прогрето»
+// в канале KINII живёт или умирает вместе с этимDiagnostic.
+const fs_promises = require('fs').promises;
 async function refreshProjectSymbols(doc) {
     try {
-        const dir = vscode.Uri.joinPath(doc.uri, '..');
-        const entries = await vscode.workspace.fs.readDirectory(dir);
-        for (const [name] of entries) {
+        const dir = path.dirname(doc.uri.fsPath);
+        const files = await fs_promises.readdir(dir);
+        for (const name of files) {
             if (!/\.(vc|ctos)$/i.test(name)) continue;
-            const furi = vscode.Uri.joinPath(dir, name);
-            let st;
-            try { st = await vscode.workspace.fs.stat(furi); } catch (e) { continue; }
-            const hit = projSymCache.get(furi.fsPath);
-            if (hit && hit.mtime === st.mtime) continue; // кэш свеж
+            const fp = path.join(dir, name);
             try {
-                const src = new TextDecoder('utf8').decode(
-                    await vscode.workspace.fs.readFile(furi));
-                const list = scanDeclNames(src, name);
-                projSymCache.set(furi.fsPath, { mtime: st.mtime, list });
+                const st = await fs_promises.stat(fp);
+                const hit = projSymCache.get(fp);
+                if (hit && hit.mtime === st.mtimeMs) continue; // кэш свеж
+                const src = await fs_promises.readFile(fp, 'utf8');
+                projSymCache.set(fp, { mtime: st.mtimeMs, list: scanDeclNames(src, name) });
             } catch (e) {
                 say('свои имена: ' + name + ' не прочёлся — ' +
                     (e && e.message ? e.message : e));

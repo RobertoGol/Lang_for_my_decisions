@@ -3,5 +3,6 @@
     "editor.quickSuggestions": { "other": true, "comments": false, "strings": false },
     "editor.acceptSuggestionOnEnter": "off",
     "editor.suggest.filterGraceful": false,
+    "editor.wordBasedSuggestions": "off",
     "kinii.hints": true
 }
