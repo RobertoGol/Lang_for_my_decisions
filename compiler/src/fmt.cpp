@@ -26,7 +26,7 @@ bool is_word(Tok t) {
         case Tok::Ident: case Tok::Number: case Tok::String: case Tok::SqlTag:
             return true;
         default:
-            return t >= Tok::KwLet && t <= Tok::TyList; // ключевые слова и типы
+            return t >= Tok::KwLet && t <= Tok::TyMap; // ключевые слова и типы
     }
 }
 
@@ -34,7 +34,7 @@ bool is_word_end(Tok t) { // выражение закончилось → сл�
     return is_word(t) || t == Tok::RParen || t == Tok::RBracket;
 }
 
-bool is_type(Tok t) { return t >= Tok::TyU8 && t <= Tok::TyList; }
+bool is_type(Tok t) { return t >= Tok::TyU8 && t <= Tok::TyMap; }
 
 bool no_space_before(Tok t) {
     switch (t) {

@@ -18,7 +18,7 @@ enum class Tok : uint8_t {
     KwMove, KwDecide, KwWeight, KwBreak, KwContinue,
     KwTrue, KwFalse, KwCell, KwType, KwOperator, KwDefine, KwTag, KwAsm,
     // типы
-    TyU8, TyU16, TyU32, TyU64, TyString, TyBool, TyPtr, TyVWord, TyVAddr, TyList,
+    TyU8, TyU16, TyU32, TyU64, TyString, TyBool, TyPtr, TyVWord, TyVAddr, TyList, TyMap,
     // пунктуация и операторы
     Plus, Minus, Star, Slash, Percent,
     Amp, Pipe, Caret, Tilde, Bang,

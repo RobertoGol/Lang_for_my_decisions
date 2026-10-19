@@ -69,6 +69,9 @@ std::string type_text_of(const TypeExpr* t) {
             return t->name.empty() ? "cell" : "cell:" + t->name;
         case TypeExpr::List:
             return "list<" + type_text_of(t->elem.get()) + ">";
+        case TypeExpr::Map:
+            return "map<" + type_text_of(t->elem.get()) + ", " +
+                   type_text_of(t->val.get()) + ">";
         case TypeExpr::Array:
             return type_text_of(t->elem.get()) + "[" + std::to_string(t->array_len) + "]";
     }
@@ -296,6 +299,16 @@ private:
                         std::string dst = type_text_of(st->type.get());
                         if (!src.empty() && !dst.empty())
                             check_assign_type(dst, src, st->init->span);
+                    } else if (st->init->kind == Expr::MapLit) {
+                        // По одной паре [«хлеб»: 50] не видно, что за словарь:
+                        // следующая пара может добавить новый тип ключа.
+                        dg_.error("K1014",
+                                  "словарь без типа — не могу вывести ключ и значение",
+                                  st->init->span)
+                            .hint("пары могут быть разнородными, поэтому тип указывается явно")
+                            .fix("как должно выглядеть:",
+                                 "let map<string, u32> цены = [\"хлеб\": 50];")
+                            .emit();
                     }
                 }
                 break;
@@ -707,6 +720,7 @@ private:
             case Expr::Ternary:
             case Expr::Index:
             case Expr::ListLit:
+            case Expr::MapLit:
                 for (const auto& k : e->kids) walk_expr(k.get());
                 break;
 

@@ -28,6 +28,7 @@ const char* kRuntime = R"RT(
 #include <string>
 #include <thread>
 #include <type_traits>
+#include <unordered_map>
 #include <vector>
 
 namespace kn {
@@ -182,6 +183,9 @@ std::string CodeGen::type_str(const TypeExpr* t) {
             return type_str(t->elem.get()); // модификатор cell на выход не влияет
         case TypeExpr::List:
             return "std::vector<" + type_str(t->elem.get()) + ">";
+        case TypeExpr::Map:
+            return "std::unordered_map<" + type_str(t->elem.get()) + ", " +
+                   type_str(t->val.get()) + ">";
         case TypeExpr::Array:
             return "std::array<" + type_str(t->elem.get()) + ", " +
                    std::to_string(t->array_len) + ">";
@@ -291,6 +295,18 @@ std::string CodeGen::gen_expr(const Expr* e) {
             for (const auto& k : e->kids)
                 if (k) items.push_back(gen_expr(k.get()));
             return "{" + join_comma(items) + "}";
+        }
+
+        case Expr::MapLit: {
+            // пары ключ/значение: замыкающий инициализатор unordered_map
+            std::vector<std::string> pairs;
+            for (size_t i = 0; i + 1 < e->kids.size(); i += 2) {
+                const Expr* k = e->kids[i].get();
+                const Expr* v = e->kids[i + 1].get();
+                if (!k || !v) continue;
+                pairs.push_back("{" + gen_expr(k) + ", " + gen_expr(v) + "}");
+            }
+            return "{" + join_comma(pairs) + "}";
         }
 
         case Expr::StructLit: {
@@ -477,6 +493,20 @@ void CodeGen::gen_stmt(Stmt* s) {
                         elem = "decltype(" + gen_expr(f) + ")";
                 }
                 line(kw + "std::vector<" + elem + "> " + s->name + " = " +
+                     gen_expr(s->init.get()) + ";");
+            } else if (s->init && s->init->kind == Expr::MapLit &&
+                       s->init->kids.size() >= 2) {
+                // словарь без типа: выводим K и V из первой пары
+                auto kind_cxx = [](const Expr* x) -> std::string {
+                    if (!x) return "int64_t";
+                    if (x->kind == Expr::Str) return "std::string";
+                    if (x->kind == Expr::Bool) return "bool";
+                    if (x->kind == Expr::Num) return "int64_t";
+                    return "decltype(" + gen_expr(x) + ")";
+                };
+                line(kw + "std::unordered_map<" +
+                     kind_cxx(s->init->kids[0].get()) + ", " +
+                     kind_cxx(s->init->kids[1].get()) + "> " + s->name + " = " +
                      gen_expr(s->init.get()) + ";");
             } else if (s->init && s->init->kind == Expr::Comprehension) {
                 line(kw + "auto " + s->name + " = " + gen_expr(s->init.get()) + ";");

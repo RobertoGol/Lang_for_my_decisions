@@ -143,7 +143,7 @@ private:
         switch (t.type) {
             case Tok::TyU8: case Tok::TyU16: case Tok::TyU32: case Tok::TyU64:
             case Tok::TyString: case Tok::TyBool: case Tok::TyPtr:
-            case Tok::TyVWord: case Tok::TyVAddr: case Tok::TyList:
+            case Tok::TyVWord: case Tok::TyVAddr: case Tok::TyList: case Tok::TyMap:
             case Tok::KwCell:
             case Tok::Ident:
                 return true;
@@ -198,6 +198,19 @@ private:
                 expect(Tok::Lt, "'<' в list<T>", "let list<string> items = [\"a\"];");
                 ty->elem = parse_type();
                 expect(Tok::Gt, "'>' закрывающий list<T>");
+                break;
+            }
+
+            case Tok::TyMap: {
+                advance();
+                ty->kind = TypeExpr::Map;
+                expect(Tok::Lt, "'<' в map<K, V>",
+                       "let map<string, u32> цены = [\"хлеб\": 50];");
+                ty->elem = parse_type();  // ключ
+                expect(Tok::Comma, "',' между ключом и значением в map<K, V>",
+                       "let map<string, u32> цены = [\"хлеб\": 50];");
+                ty->val = parse_type();   // значение
+                expect(Tok::Gt, "'>' закрывающий map<K, V>");
                 break;
             }
 
@@ -922,6 +935,24 @@ private:
                             ExprP cond = parse_expr();
                             if (!cond) return nullptr;
                             e->kids.push_back(std::move(cond));
+                        }
+                    } else if (match(Tok::Colon)) {
+                        // словарь: ["хлеб": 50, "молоко": 90] — пары ключ: значение
+                        e->kind = Expr::MapLit;
+                        e->kids.push_back(std::move(first));    // ключ
+                        ExprP v = parse_expr();
+                        if (!v) return nullptr;
+                        e->kids.push_back(std::move(v));        // значение
+                        while (match(Tok::Comma)) {
+                            if (check(Tok::RBracket)) break;    // запятая в конце — можно
+                            ExprP k2 = parse_expr();
+                            if (!k2) break;
+                            expect(Tok::Colon, "':' между ключом и значением",
+                                   "[\"хлеб\": 50, \"молоко\": 90]");
+                            e->kids.push_back(std::move(k2));
+                            ExprP v2 = parse_expr();
+                            if (!v2) break;
+                            e->kids.push_back(std::move(v2));
                         }
                     } else {
                         e->kids.push_back(std::move(first));

@@ -51,7 +51,7 @@ const std::unordered_map<std::string, Tok> kKeywords = {
     {"u8", Tok::TyU8},   {"u16", Tok::TyU16}, {"u32", Tok::TyU32},
     {"u64", Tok::TyU64}, {"string", Tok::TyString}, {"bool", Tok::TyBool},
     {"ptr", Tok::TyPtr}, {"v_word", Tok::TyVWord}, {"v_addr", Tok::TyVAddr},
-    {"list", Tok::TyList},
+    {"list", Tok::TyList}, {"map", Tok::TyMap},
 };
 
 struct Lexer {
@@ -544,6 +544,7 @@ const char* tok_name(Tok t) {
         case Tok::TyVWord: return "v_word";
         case Tok::TyVAddr: return "v_addr";
         case Tok::TyList: return "list";
+        case Tok::TyMap: return "map";
         case Tok::Plus: return "+";
         case Tok::Minus: return "-";
         case Tok::Star: return "*";

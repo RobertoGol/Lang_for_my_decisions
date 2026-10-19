@@ -11,10 +11,11 @@ namespace kinii {
 
 // ---------- Тип ----------
 struct TypeExpr {
-    enum Kind { Named, Cell, List, Array };
+    enum Kind { Named, Cell, List, Array, Map };
     Kind kind = Named;
     std::string name;                // Named: "u32", "Point"; Cell: модификатор ("" = vocal)
-    std::unique_ptr<TypeExpr> elem;  // List<T>: T
+    std::unique_ptr<TypeExpr> elem;  // List<T>: T; Map<K,V>: K
+    std::unique_ptr<TypeExpr> val;   // Map<K,V>: V
     uint32_t array_len = 0;          // Array: длина
     Span span;
 };
@@ -29,6 +30,7 @@ using TypeP = std::unique_ptr<TypeExpr>;
 //   Member: [obj], поле в field
 //   Index: [obj, index]
 //   ListLit: элементы
+//   MapLit: пары [ключ, значение, ключ, значение, ...]
 //   StructLit: имя типа в field, имена полей в fields, значения в kids
 //   Comprehension: [элемент, источник, условие?], переменная в text
 struct Expr {
@@ -36,7 +38,7 @@ struct Expr {
         Num, Str, Bool, Ident,
         Binary, Unary, Ternary, Assign,
         Call, Member, Index,
-        ListLit, StructLit, Comprehension,
+        ListLit, MapLit, StructLit, Comprehension,
     };
     Kind kind;
     Span span;
