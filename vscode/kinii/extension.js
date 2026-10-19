@@ -21,6 +21,13 @@ const openDocs = new Map();  // uri -> version (открытые у нас до�
 
 let nextRequestId = 1000;
 
+// Ночная тишина во время набора: снимки диагностик + курсор.
+// Слово под курсором (недописанный while и т.п.) не подсвечивается, пока
+// слово не дописано; пауза 0.7с возвращают полную картину.
+const latestDiags = new Map(); // uri -> Diagnostic[]
+let applyTimer = null;
+let cursorInfo = { uri: '', line: -1, character: -1 };
+
 // Запрос-ответ: hover и прочее. resolve сработает в handleRpc по id.
 function request(method, params) {
     if (!server) return Promise.resolve(null);
@@ -36,6 +43,50 @@ function request(method, params) {
             }
         }, 8000);
     });
+}
+
+// ---------- диагностика без дёрганья ----------
+// Прячет диагностик, попадающие в слово, которое прямо сейчас пишут.
+
+function wordUnderCursor(doc, pos) {
+    // границы «слова» со кириллицей: [начало, конец); null, если не в слове
+    const line = doc.lineAt(Math.min(pos.line, doc.lineCount - 1));
+    const isW = (c) => /[A-Za-zА-Яа-яЁё0-9_]/.test(c);
+    if (pos.character === 0 || !isW(line.text[pos.character - 1] || ' ')) return null;
+    let s = pos.character;
+    while (s > 0 && isW(line.text[s - 1])) s--;
+    let e = pos.character;
+    while (e < line.text.length && isW(line.text[e])) e++;
+    return { start: s, end: e };
+}
+
+function overlapsTyping(item, doc, pos) {
+    const w = wordUnderCursor(doc, pos);
+    if (!w) return false; // курсор не в слове — ничего не прячем
+    const r = item.range;
+    if (r.start.line !== pos.line) return false;
+    return r.start.character <= w.end && r.end.character >= w.start;
+}
+
+function applyDiagnostics(uri) {
+    const key = uri.toString();
+    let items = latestDiags.get(key) || [];
+    if (items.length) {
+        const ed = vscode.window.activeTextEditor;
+        if (ed && ed.document.uri.toString() === key) {
+            const pos = ed.selection.active;
+            items = items.filter((it) => !overlapsTyping(it, ed.document, pos));
+        }
+    }
+    collection.set(uri, items);
+}
+
+function scheduleApply(uri) {
+    if (applyTimer) clearTimeout(applyTimer);
+    applyTimer = setTimeout(() => {
+        applyTimer = null;
+        applyDiagnostics(uri);
+    }, 700);
 }
 
 // ---------- фрейминг ----------
@@ -97,7 +148,11 @@ function handleRpc(msg) {
             return item;
         });
         say(`диагностики: ${uri.path.split('/').pop()} → ${diags.length} шт.`);
-        collection.set(uri, diags);
+        // Плавность набора: latest-снимок подставляем с паузой 0.7с после
+        // последней правки. Честность не теряем — CLI-проверка показывает всё,
+        // а в редакторе диагностики возвращаются, как только поймали паузу.
+        latestDiags.set(uri.toString(), diags);
+        scheduleApply(uri);
         return;
     }
     if (msg.method === 'window/showMessage') {
@@ -206,6 +261,7 @@ function didChange(doc) {
 
 function didClose(doc) {
     openDocs.delete(doc.uri.toString());
+    latestDiags.delete(doc.uri.toString());
     collection.delete(doc.uri);
     sendServer({
         jsonrpc: '2.0', method: 'textDocument/didClose',
@@ -326,6 +382,27 @@ function activate(context) {
             if (e.document.languageId === 'kinii') didChange(e.document);
         }),
         vscode.workspace.onDidCloseTextDocument(didClose),
+        // Курсор — чтобы знать, какое слово прямо сейчас дописывают.
+        vscode.window.onDidChangeTextEditorSelection((e) => {
+            if (e.textEditor.document.languageId === 'kinii') {
+                const p = e.selections[0]?.active;
+                if (p) {
+                    cursorInfo = {
+                        uri: e.textEditor.document.uri.toString(),
+                        line: p.line,
+                        character: p.character,
+                    };
+                    // курсор ушёл / слово дописано — вернуть всё как есть
+                    if (applyTimer) { clearTimeout(applyTimer); }
+                    if (latestDiags.has(cursorInfo.uri)) {
+                        applyTimer = setTimeout(() => {
+                            applyTimer = null;
+                            applyDiagnostics(vscode.Uri.parse(cursorInfo.uri));
+                        }, 250);
+                    }
+                }
+            }
+        }),
         vscode.commands.registerCommand('kinii.restartServer', () => {
             stopServer();
             for (const uri of openDocs.keys()) collection.delete(vscode.Uri.parse(uri));
