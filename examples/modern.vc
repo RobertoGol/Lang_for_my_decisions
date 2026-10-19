@@ -1,0 +1,71 @@
+//---- [LOGIC] ----/
+// Пример закрытого бэкенда: decide по строкам, системные вызовы,
+// node/isolate (потоки), break внутри decide.
+
+import "util.ctos";
+
+// decide по строкам — как switch, только честно и по-человечески.
+fn command_word(cmd: string) -> string {
+    let out = "";
+    decide (cmd) {
+        weight("go")   => { out = "вперёд"; }
+        weight("back") => { out = "назад"; }
+        else           => { out = "не понял команду"; }
+    }    return out;
+}
+
+// break внутри decide выходит из ближайшего цикла — как его читает человек.
+fn stops_at_two() -> u32 {
+    let i = 0;
+    loop {
+        decide (i) {
+            weight(2) => { break; }
+            else      => { i = i + 1; }
+        }
+    }
+    return i;
+}
+
+// узел: свои функции (видны всему проекту) и свои инструкции-поток.
+node Ticker {
+    fn tick_count() -> u32 { return 3; }
+
+    let n = tick_count();
+    while (n > 0) {
+        n = n - 1;
+    }
+}
+
+// изолят: задача, которая живёт параллельно с app_entry.
+isolate Warmup {
+    let warmed = 0;
+    while (warmed < 100) {
+        warmed = warmed + 1;
+    }
+}
+
+app_entry {
+    print("--- decide по строкам ---");
+    print(command_word("go"));
+    print(command_word("back"));
+    print(command_word("jump"));
+
+    print("--- break внутри decide ---");
+    print("остановились на:", stops_at_two());
+
+    print("--- системные вызовы ---");
+    print("время (мс):", sys.time.now());
+    const LIMIT = 100;
+    let r = sys.rnd.next(LIMIT);
+    print("случайное до", LIMIT, ":", r);
+
+    console.print("console.print работает так же, как print");
+
+    print("--- узел и изолят уже работают в фоне ---");
+    print("узел Ticker насчитал тиков:", tick_count());
+
+    if (r == 4) {
+        sys.exit(4);  // честный код выхода
+    }
+    print("готово");
+}

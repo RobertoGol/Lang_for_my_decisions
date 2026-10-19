@@ -14,29 +14,58 @@ namespace kinii {
 
 namespace {
 
-// Встроенный минимальный рантайм: print/len.
-// مواد u8 печатается числом (у std::cout uint8_t печатался бы как символ).
+// Встроенный минимальный рантайм: print/len/read_line и системные вызовы
+// sys.exit / sys.time.now / sys.rnd.next — всё честно и видно в сгенерированном C++.
+// u8 печатается числом (у std::cout uint8_t печатался бы как символ).
 const char* kRuntime = R"RT(
 // Стандартная библиотека C++ (runtime KINII генерирует сам).
 #include <array>
+#include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
+#include <random>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <vector>
 
 namespace kn {
 template <class T>
-void print(const T& v) {
+void put_one(const T& v) {
     if constexpr (std::is_integral_v<T> && sizeof(T) == 1)
         std::cout << (int)v;
     else
         std::cout << v;
+}
+// print работает с любым числом аргументов: печатает подряд и переводит строку.
+template <class... A>
+void print(const A&... a) {
+    (put_one(a), ...);
     std::cout << std::endl;
 }
 template <class C>
 auto len(const C& c) -> decltype(c.size()) {
     return c.size();
+}
+inline std::string read_line(const std::string& prompt = "") {
+    if (!prompt.empty()) std::cout << prompt;
+    std::string s;
+    std::getline(std::cin, s);
+    return s;
+}
+[[noreturn]] inline void sys_exit(uint64_t code) {
+    std::exit((int)code);
+}
+inline uint64_t time_now_ms() {
+    using namespace std::chrono;
+    return (uint64_t)duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+}
+inline uint64_t rnd_next(uint64_t limit) {
+    if (limit == 0) return 0;
+    static std::mt19937_64 rng{ std::random_device{}() };
+    std::uniform_int_distribution<uint64_t> d(0, limit - 1);
+    return d(rng);
 }
 } // namespace kn
 
@@ -91,6 +120,19 @@ std::string join_comma(const std::vector<std::string>& v) {
     return r;
 }
 
+// Точка-путь вида "console.print" или "sys.time.now"; пусто, если выражение
+// не состоит из одних идентификаторов через точку.
+std::string dotted_path(const Expr* e) {
+    if (!e) return "";
+    if (e->kind == Expr::Ident) return e->text;
+    if (e->kind == Expr::Member && e->kids[0]) {
+        std::string base = dotted_path(e->kids[0].get());
+        if (base.empty()) return "";
+        return base + "." + e->field;
+    }
+    return "";
+}
+
 } // namespace
 
 CodeGen::CodeGen(DiagnosticEngine& dg, std::ostream& os) : dg_(dg), os_(os) {}
@@ -121,10 +163,20 @@ void CodeGen::begin() {
     os_ << kRuntime << "\n";
 }
 
-std::string CodeGen::type_str(const TypeExpr* t) const {
+std::string CodeGen::type_str(const TypeExpr* t) {
     if (!t) return "auto";
     switch (t->kind) {
         case TypeExpr::Named:
+            if (nodes_.count(t->name)) {
+                saw_error_ = true;
+                dg_.error("K3001",
+                          "узел '" + t->name + "' не является типом — это единица "
+                          "исполнения: у него свой поток",
+                          t->span)
+                    .hint("состояние узла храните внутри struct, узел читает/пишет её")
+                    .emit();
+                return "void";
+            }
             return builtin_type(t->name);
         case TypeExpr::Cell:
             return type_str(t->elem.get()); // модификатор cell на выход не влияет
@@ -188,13 +240,33 @@ std::string CodeGen::gen_expr(const Expr* e) {
                 }
             }
             if (callee->kind == Expr::Member) {
-                // что-то вида console.log / sys.* — в этом бэкенде нет
-                std::string full =
-                    (callee->kids[0] ? callee->kids[0]->text : "?") + "." + callee->field;
-                error_unsupported("K3001",
-                                  "встроенная операция '" + full +
-                                      "' не поддерживается в бэкенде",
-                                  callee->span);
+                // Системные вызовы с точкой: console.print(...), sys.exit(...) и т.п.
+                std::string path = dotted_path(callee);
+                std::vector<std::string> args;
+                for (size_t i = 1; i < e->kids.size(); ++i)
+                    args.push_back(gen_expr(e->kids[i].get()));
+
+                if (path == "console.print")
+                    return "kn::print(" + join_comma(args) + ")";
+                if (path == "console.read_input" || path == "console.read_line")
+                    return "kn::read_line(" + join_comma(args) + ")";
+                if (path == "sys.exit")
+                    return "kn::sys_exit(" + join_comma(args) + ")";
+                if (path == "sys.time.now")
+                    return "kn::time_now_ms(" + join_comma(args) + ")";
+                if (path == "sys.rnd.next")
+                    return "kn::rnd_next(" + join_comma(args) + ")";
+
+                if (!path.empty()) {
+                    saw_error_ = true;
+                    dg_.error("K3001",
+                              "системный вызов '" + path + "' не входит в бэкенд",
+                              callee->span)
+                        .hint("поддерживаются: console.print, console.read_input, "
+                              "console.read_line, sys.exit, sys.time.now, sys.rnd.next")
+                        .hint("что-то другое из sys.* — опишите обычной функцией")
+                        .emit();
+                }
                 return "0";
             }
 
@@ -351,25 +423,34 @@ void CodeGen::gen_stmt(Stmt* s) {
         }
 
         case Stmt::Decide: {
-            std::string subj = s->kids.size() ? gen_expr(s->kids[0].get()) : "";
-            line("switch (" + subj + ") {");
+            // Ветвление выводим как цепочку if/else, а не switch:
+            //   1) работает и по строкам («weight "SQL" => { ... }»);
+            //   2) break внутри ветки честно выходит из ближайшего цикла,
+            //      как его читает человек — decide это ветвление, а не цикл.
+            // Тема вычисляется один раз: side effects не дублируются.
+            if (s->cases.empty()) break;
+            std::string subj = s->kids.size() ? gen_expr(s->kids[0].get()) : "0";
+            line("{");
             ind_++;
+            line("auto&& kn_s = (" + subj + ");");
+            // сначала все weight-ветки в порядке написания, else — всегда последней
+            const Stmt::Case* else_case = nullptr;
+            bool chain_open = false;
             for (const auto& c : s->cases) {
-                if (c.value) {
-                    const Expr* v = c.value.get();
-                    if (v->kind == Expr::Str) {
-                        error_unsupported(
-                            "K3001", "decide работает по числам и перечислениям, "
-                                     "не по строкам", v->span);
-                    }
-                    line("case " + gen_expr(v) + ": {");
-                } else {
-                    line("default: {");
-                }
+                if (!c.value) { else_case = &c; continue; }
+                line((chain_open ? "else if (kn_s == " : "if (kn_s == ") +
+                     gen_expr(c.value.get()) + ") {");
+                chain_open = true;
                 ind_++;
                 gen_body(c.body);
                 ind_--;
-                line("    break;");
+                line("}");
+            }
+            if (else_case) {
+                line(chain_open ? "else {" : "if (true) {");
+                ind_++;
+                gen_body(else_case->body);
+                ind_--;
                 line("}");
             }
             ind_--;
@@ -440,6 +521,8 @@ bool top_name_of(const Stmt& s, std::string& name_out) {
         case Stmt::Const:
         case Stmt::StructDecl:
         case Stmt::EnumDecl:
+        case Stmt::NodeDecl:
+        case Stmt::IsolateDecl:
             name_out = s.name;
             return true;
         default:
@@ -459,6 +542,11 @@ void CodeGen::declare_types(Stmt* root) {
                       s->span)
                 .hint("переименуйте в одном из файлов или объедините их")
                 .emit();
+            continue;
+        }
+        if (s->kind == Stmt::NodeDecl || s->kind == Stmt::IsolateDecl) {
+            // узел/изолят — не структура и не перечисление: его имя не тип
+            nodes_.insert(dup);
             continue;
         }
         if (s->kind == Stmt::StructDecl) {
@@ -487,33 +575,76 @@ void CodeGen::define_globals(Stmt* root) {
     }
 }
 
+// Печать одной функции верхнего уровня.
+void CodeGen::emit_fn(Stmt* s) {
+    std::vector<std::string> params;
+    for (const auto& p : s->params) {
+        std::string pt = p.type ? type_str(p.type.get()) : "auto";
+        params.push_back(pt + " " + p.name);
+    }
+    std::string ret = s->ret ? type_str(s->ret.get()) : "void";
+    line("");
+    line(ret + " " + s->name + "(" + join_comma(params) + ") {");
+    ind_++;
+    if (s->block) gen_body(s->block->body);
+    ind_--;
+    line("}");
+}
+
 void CodeGen::define_fns(Stmt* root) {
     if (!root) return;
     for (const auto& s : root->body) {
-        if (!s || s->kind != Stmt::FnDecl) continue;
-        std::vector<std::string> params;
-        for (const auto& p : s->params) {
-            std::string pt = p.type ? type_str(p.type.get()) : "auto";
-            params.push_back(pt + " " + p.name);
-        }
-        std::string ret = s->ret ? type_str(s->ret.get()) : "void";
-        line("");
-        line(ret + " " + s->name + "(" + join_comma(params) + ") {");
-        ind_++;
-        if (s->block) gen_body(s->block->body);
-        ind_--;
-        line("}");
-    }
-    // Node/isolate пока честно не поддерживаем.
-    for (const auto& s : root->body) {
         if (!s) continue;
-        if (s->kind == Stmt::NodeDecl || s->kind == Stmt::IsolateDecl)
-            error_unsupported("K3001",
-                              "'" + (s->kind == Stmt::NodeDecl ? std::string("node")
-                                                               : std::string("isolate")) +
-                                  "' в бэкенде пока не поддерживается — опишите "
-                                  "обычные функции и app_entry",
-                              s->span);
+
+        if (s->kind == Stmt::FnDecl) {
+            emit_fn(s.get());
+            continue;
+        }
+
+        // node/isolate: Linux-модель — модуль как задача.
+        //   * его функции поднимаются в проект (видны всем файлам);
+        //   * его инструкции образуют тело задачи, которая стартует
+        //     в начале main и всегда join-ится перед его выходом —
+        //     программа не завершается раньше своих задач («systemd-юнит»).
+        if (s->kind == Stmt::NodeDecl || s->kind == Stmt::IsolateDecl) {
+            if (!s->block) continue;
+
+            // функции узла — обычные функции проекта (межфайловые дубли ловим)
+            bool has_fn = false;
+            for (const auto& inner : s->block->body) {
+                if (!inner || inner->kind != Stmt::FnDecl) continue;
+                has_fn = true;
+                if (!taken_.insert(inner->name).second) {
+                    saw_error_ = true;
+                    dg_.error("K3001",
+                              "имя '" + inner->name + "' объявлено в двух местах "
+                              "проекта — для бэкенда это один и тот же C++ "
+                              "идентификатор",
+                              inner->span)
+                        .hint("переименуйте функцию в узле '" + s->name + "'")
+                        .emit();
+                    continue;
+                }
+                emit_fn(inner.get());
+            }
+
+            // инструкции тела узла -> отдельная задача-функция
+            std::vector<Stmt*> plain;
+            for (const auto& inner : s->block->body)
+                if (inner && inner->kind != Stmt::FnDecl) plain.push_back(inner.get());
+            if (plain.empty() && !has_fn) continue; // пустой узел — не задача
+
+            std::string fname =
+                "kn_iso_body_" + std::to_string(iso_jobs_.size());
+            line("");
+            line("void " + fname + "() {");
+            ind_++;
+            for (Stmt* st : plain) gen_stmt(st);
+            ind_--;
+            line("}");
+            iso_jobs_.push_back(fname);
+            (void)has_fn;
+        }
     }
 }
 
@@ -537,10 +668,19 @@ void CodeGen::define_entry(Stmt* root) {
         return;
     }
     entry_done_ = true;
+    // Задачи узлов стартуют вместе с приложением — как systemd-юниты.
+    for (const auto& job : iso_jobs_) {
+        line("");
+        line("std::thread " + job + "_t(" + job + ");");
+    }
     line("");
     line("int main() {");
     ind_++;
     if (entry->block) gen_body(entry->block->body);
+    // приложение не завершается раньше своих задач
+    for (const auto& job : iso_jobs_) {
+        line(job + "_t.join();");
+    }
     line("return 0;");
     ind_--;
     line("}");

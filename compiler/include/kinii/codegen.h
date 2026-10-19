@@ -59,10 +59,16 @@ private:
     void out_indent();
     void line(const std::string& text);
 
-    std::string type_str(const TypeExpr* t) const;
+    std::string type_str(const TypeExpr* t);
     std::string gen_expr(const Expr* e);
     void gen_stmt(Stmt* s);
     void gen_body(const std::vector<std::unique_ptr<Stmt>>& body);
+
+    // Печать одной функции верхнего уровня (в т.ч. функций из node/isolate).
+    void emit_fn(Stmt* s);
+
+    std::set<std::string> nodes_;         // имена node/isolate (не типы!)
+    std::vector<std::string> iso_jobs_;   // kn_iso_body_N — потоки стартуют из main
 };
 
 // Готовит имя exe по умолчанию (стебель входного файла) — helper для CLI.

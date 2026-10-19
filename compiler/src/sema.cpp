@@ -75,8 +75,19 @@ std::string type_text_of(const TypeExpr* t) {
     return "?";
 }
 
-size_t lev(const std::string& a, const std::string& b) {
-    const size_t n = a.size(), m = b.size();
+// Точка-путь вида "console.print" — пусто, если это не цепочка имён через точку.
+std::string dotted_path(const Expr* e) {
+    if (!e) return "";
+    if (e->kind == Expr::Ident) return e->text;
+    if (e->kind == Expr::Member && !e->kids.empty()) {
+        std::string base = dotted_path(e->kids[0].get());
+        if (base.empty()) return "";
+        return base + "." + e->field;
+    }
+    return "";
+}
+
+size_t lev(const std::string& a, const std::string& b) {    const size_t n = a.size(), m = b.size();
     std::vector<size_t> prev(m + 1), cur(m + 1);
     for (size_t j = 0; j <= m; ++j) prev[j] = j;
     for (size_t i = 1; i <= n; ++i) {
@@ -113,6 +124,7 @@ private:
     FileSema& out_;
     SemaResult& res_;
     std::vector<std::unique_ptr<Scope>> scopes_;
+    int loops_ = 0; // глубина циклов: break/continue живут только в них
 
     Scope* cur() { return scopes_.back().get(); }
 
@@ -310,7 +322,10 @@ private:
                     ps.span = p.span;
                     declare(ps);
                 }
+                int saved_loops = loops_;
+                loops_ = 0; // у функции свои циклы — break не перепрыгивает границы
                 if (st->block) walk_stmt(st->block.get());
+                loops_ = saved_loops;
                 pop_scope();
                 break;
             }
@@ -358,6 +373,24 @@ private:
                 push_scope();
                 if (st->block) walk_stmt(st->block.get());
                 pop_scope();
+                // Функции узла — функции проекта: поднимаем их на верхний уровень
+                // (кодогенерация делает то же самое — честная пара).
+                if (st->block) {
+                    for (const auto& inner : st->block->body) {
+                        if (!inner || inner->kind != Stmt::FnDecl) continue;
+                        Symbol f;
+                        f.kind = Symbol::Fn;
+                        f.name = inner->name;
+                        f.type_text =
+                            inner->ret ? type_text_of(inner->ret.get()) : "void";
+                        f.is_pub = inner->is_pub;
+                        f.param_count = (int)inner->params.size();
+                        f.file = fid_;
+                        f.span = inner->name_span.file != kNoFile ? inner->name_span
+                                                                  : inner->span;
+                        declare(f); // до имени дотянется и этот файл, и весь проект
+                    }
+                }
                 break;
             }
 
@@ -389,14 +422,18 @@ private:
             case Stmt::While: {
                 if (!st->kids.empty()) walk_expr(st->kids[0].get());
                 push_scope();
+                loops_++;
                 for (const auto& b : st->body) walk_stmt(b.get());
+                loops_--;
                 pop_scope();
                 break;
             }
 
             case Stmt::Loop: {
                 push_scope();
+                loops_++;
                 for (const auto& b : st->body) walk_stmt(b.get());
+                loops_--;
                 pop_scope();
                 break;
             }
@@ -411,7 +448,9 @@ private:
                 v.file = fid_;
                 v.span = st->span;
                 declare(v);
+                loops_++;
                 for (const auto& b : st->body) walk_stmt(b.get());
+                loops_--;
                 pop_scope();
                 break;
             }
@@ -444,6 +483,23 @@ private:
 
             case Stmt::Return:
                 if (!st->kids.empty()) walk_expr(st->kids[0].get());
+                break;
+
+            case Stmt::Break:
+            case Stmt::Continue:
+                // честность: break/continue выходят из ближайшего цикла.
+                // decide — ветвление, а не цикл; break внутри него уходит в цикл.
+                if (loops_ == 0) {
+                    dg_.error(st->kind == Stmt::Break ? "K2013" : "K2014",
+                              std::string(st->kind == Stmt::Break ? "break" : "continue") +
+                                  " не в цикле — он имеет смысл только внутри "
+                                  "while/loop/for",
+                              st->span)
+                        .hint(st->kind == Stmt::Break
+                                  ? "выйти из decide нельзя — он просто выбирает ветку"
+                                  : "continue тоже работает только в цикле")
+                        .emit();
+                }
                 break;
 
             case Stmt::ExprStmt:
@@ -497,6 +553,29 @@ private:
                             b.emit();
                         }
                     }
+                }
+                // Системные вызовы бэкенда: проверяем число аргументов честно.
+                if (callee->kind == Expr::Member) {
+                    std::string path = dotted_path(callee);
+                    size_t nargs = e->kids.size() - 1;
+                    auto wrong = [&](const std::string& want) {
+                        dg_.error("K2006",
+                                  "системный вызов '" + path + "' принимает " +
+                                      want + ", передано " + std::to_string(nargs),
+                                  e->span)
+                            .hint("сверьтесь со списком системных вызовов в SPEC.md")
+                            .emit();
+                    };
+                    if (path == "sys.exit" && nargs != 1)
+                        wrong("1 аргумент (код выхода)");
+                    else if (path == "sys.time.now" && nargs != 0)
+                        wrong("0 аргументов");
+                    else if (path == "sys.rnd.next" && nargs != 1)
+                        wrong("1 аргумент (верхняя граница)");
+                    else if ((path == "console.read_input" ||
+                              path == "console.read_line") &&
+                             nargs > 1)
+                        wrong("0–1 аргумент (необязательная подсказка)");
                 }
                 for (size_t i = 1; i < e->kids.size(); ++i) walk_expr(e->kids[i].get());
                 break;

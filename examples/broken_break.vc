@@ -1,0 +1,14 @@
+//---- [LOGIC] ----/
+// Проверка: break не в цикле — честная ошибка семантики.
+
+fn bad(x: u32) -> u32 {
+    decide (x) {
+        weight(0) => { break; }
+        else     => { return 1; }
+    }
+    return 0;
+}
+
+app_entry {
+    print("не должно дойти");
+}

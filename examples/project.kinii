@@ -11,3 +11,4 @@ entry: opt_demo.vc
 entry: sem_check.vc
 entry: opt_import.vc
 entry: cs_style.vc
+entry: modern.vc
