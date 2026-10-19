@@ -358,7 +358,7 @@ const HINTS = [
 // С ними провайдер вызывается на КАЖДУЮ набранную букву — даже если меню
 // недавно гасили (Esc/клик мимо), редактор обязан спросить снова.
 const SUGGEST_TRIGGER_CHARS = (() => {
-    const out = ['_', 'ё', 'Ё'];
+    const out = ['_', 'ё', 'Ё', '.']; // '.' — вход в режим полей (после точки)
     for (const [a, b] of [['a', 'z'], ['А', 'Я'], ['а', 'я'], ['0', '9']]) {
         for (let c = a.charCodeAt(0); c <= b.charCodeAt(0); ++c) {
             out.push(String.fromCharCode(c));
@@ -458,7 +458,11 @@ async function refreshProjectSymbols(doc) {
                 const hit = projSymCache.get(fp);
                 if (hit && hit.mtime === st.mtimeMs) continue; // кэш свеж
                 const src = await fs_promises.readFile(fp, 'utf8');
-                projSymCache.set(fp, { mtime: st.mtimeMs, list: scanDeclNames(src, name) });
+                projSymCache.set(fp, {
+                    mtime: st.mtimeMs,
+                    list: scanDeclNames(src, name),
+                    structs: scanStructFields(src),
+                });
             } catch (e) {
                 say('свои имена: ' + name + ' не прочёлся — ' +
                     (e && e.message ? e.message : e));
@@ -496,6 +500,125 @@ function collectProjectNames(doc) {
     return names;
 }
 
+// ---------- слой полей: текст после точки ----------
+
+// Встроенные члены (по SPEC «библиотека»). Ключи — путь ДО точки.
+const BUILTIN_MEMBERS = {
+    'sys': [
+        { name: 'exit', type: '(код) — код выхода: sys.exit(0);' },
+        { name: 'time.now', type: '() u64 — время в миллисекундах' },
+        { name: 'rnd.next', type: '(макс) — случайное 0..максимум-1' },
+    ],
+    'sys.time': [{ name: 'now', type: '() u64 — время в мс' }],
+    'sys.rnd': [{ name: 'next', type: '(макс) — случайное число' }],
+    'console': [
+        { name: 'print', type: '(...) — то же, что print' },
+        { name: 'read_input', type: '(подсказка) — прочитать строку' },
+        { name: 'read_line', type: '() — прочитать строку' },
+    ],
+};
+
+// Тип переменной из буфера: «let Точка точка = …» или «let точка = Точка {».
+// Терпим к недопечатанной строке (без точки с запятой на конце).
+function varTypeInBuffer(doc, varName) {
+    let lines;
+    try {
+        lines = doc.getText().split('\n');
+    } catch (e) { return null; }
+    const re = new RegExp('^\\s*(?:let|const)\\s+([^=;]+?)\\s*(?==|;|$)');
+    for (let i = lines.length - 1; i >= 0; --i) {
+        const raw = lines[i].replace(/\/\/.*$/, '');
+        const m = re.exec(raw);
+        if (!m) continue;
+        let part = m[1];
+        const cellraw = /^\s*cell\s*:\s*raw\b/.exec(part);
+        if (cellraw) part = part.slice(cellraw[0].length);
+        const colon = part.indexOf(':');
+        if (colon >= 0) part = part.slice(0, colon);
+        const nm = /([A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё_0-9]*)\s*$/.exec(part);
+        if (!nm || nm[1] !== varName) continue;
+        const rest = part.slice(0, nm.index).trim();
+        if (/^[A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё_0-9]*$/.test(rest)) return rest;
+        const lit = /=\s*([A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё_0-9]*)\s*\{/.exec(raw);
+        if (lit) return lit[1];
+        return null;
+    }
+    return null;
+}
+
+// Поля структур: имя структуры → [{ name, type }]. Вложенные поля не ждём.
+function scanStructFields(text) {
+    const out = new Map();
+    const lines = text.split('\n').map((l) => l.replace(/\/\/.*$/, ''));
+    for (let i = 0; i < lines.length; ++i) {
+        const head = /^\s*struct\s+([A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё_0-9]*)\s*\{(.*)$/.exec(lines[i]);
+        if (!head) continue;
+        const fields = [];
+        let body = head[2];
+        while (i < lines.length) {
+            const re = /([A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё_0-9]*)\s*:\s*([^;,}\n]+)/g;
+            let f;
+            while ((f = re.exec(body))) fields.push({ name: f[1], type: f[2].trim() });
+            if (body.indexOf('}') >= 0) break;
+            if (++i >= lines.length) break;
+            body = lines[i];
+        }
+        out.set(head[1], fields);
+    }
+    return out;
+}
+
+// Сводный индекс структур: буфер важнее соседних файлов.
+function structIndexFor(doc) {
+    let buf;
+    try {
+        buf = scanStructFields(doc.getText());
+    } catch (e) { buf = new Map(); }
+    for (const { structs } of projSymCache.values()) {
+        if (!structs) continue;
+        for (const [k, v] of structs) if (!buf.has(k)) buf.set(k, v);
+    }
+    return buf;
+}
+
+// «точка.х» / «sys.time.» → поля структуры или члены встроенных.
+function provideFieldHints(doc, owner, typed, rich) {
+    let list = null;
+    let origin = '';
+    let isFn = false;
+    if (BUILTIN_MEMBERS[owner]) {
+        origin = 'встроенное';
+        isFn = true;
+        list = BUILTIN_MEMBERS[owner].filter(
+            (f) => f.name.toLowerCase().startsWith(typed.toLowerCase()));
+    } else {
+        const structs = structIndexFor(doc);
+        const stName = varTypeInBuffer(doc, owner);
+        if (stName && structs.has(stName)) {
+            origin = 'структура ' + stName;
+            list = structs.get(stName).filter(
+                (f) => f.name.toLowerCase().startsWith(typed.toLowerCase()));
+        }
+    }
+    if (!list || !list.length) return null;
+    const items = [];
+    for (const f of list) {
+        const it = new vscode.CompletionItem(f.name,
+            isFn ? vscode.CompletionItemKind.Method
+                 : vscode.CompletionItemKind.Property);
+        it.insertText = f.name; // VS Code подставит сразу после точки
+        it.detail = origin + ' · ' + f.type;
+        if (rich) {
+            it.documentation = new vscode.MarkdownString(
+                '```kinii\n' + owner + '.' + f.name + ' — ' + f.type + '\n```');
+        }
+        it.sortText = '0' + f.name;
+        items.push(it);
+    }
+    say(`подсказки: поля '${owner}.' → ${items.length} (${origin}), допечатано '${typed}'`);
+    return items;
+}
+
 function provideSoftHints(doc, pos, ctx) {
     // Выключаемо настройкой kinii.hints.
     if (!vscode.workspace.getConfiguration('kinii').get('hints', true)) {
@@ -505,21 +628,23 @@ function provideSoftHints(doc, pos, ctx) {
     // Не подсказываем внутри комментария.
     const before = doc.getText(new vscode.Range(new vscode.Position(pos.line, 0), pos));
     if (before.lastIndexOf('//') >= 0) return null;
+    // Режим вида: Ctrl+Space (Invoke) — богатый; буква-триггер — компактный.
+    const INVOKE = (vscode.CompletionTriggerKind && vscode.CompletionTriggerKind.Invoke) || 0;
+    const kind = ctx ? ctx.triggerKind : 'нет-ctx';
+    const rich = (ctx && ctx.triggerKind === INVOKE) ||
+        (richHintNext && Date.now() - richHintNext < 1500);
+    richHintNext = 0;
+
+    // --- слой полей: слово после точки («точка.х», «sys.») ---
+    // Поля структуры из её объявления; для встроенных — их члены.
+    const dotField = /([A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё_0-9]*(?:\.[A-Za-zА-Яа-яЁё_0-9]+)*)\.([A-Za-zА-Яа-яЁё_0-9]*)$/.exec(before);
+    if (dotField) return provideFieldHints(doc, dotField[1], dotField[2] || '', rich);
+
     // Свой слой — синхронно из кэша; пополнение фоном к СЛЕДУЮЩЕМУ ходу.
     const own = collectProjectNames(doc);
     // Телеметрия меню: слово + сколько чего отдали (смотри Output → KINII).
     const m = /[A-Za-zА-Яа-яЁё0-9_]+$/.exec(before);
     const word = m ? m[0] : '';
-    // Режим вида: Ctrl+Space (Invoke) — широкий список с описанием/примером;
-    // набор буквы-триггером — компактный.
-    const INVOKE = (vscode.CompletionTriggerKind && vscode.CompletionTriggerKind.Invoke) || 0;
-    const kind = ctx ? ctx.triggerKind : 'нет-ctx';
-    // rich = явный Ctrl+Space ЛИБО моя команда kinii.richHints, повешенная
-    // на Ctrl+Space: она ставит флажок до вызова провайдера — не гадаем,
-    // какой triggerKind решит прислать редактор.
-    const rich = (ctx && ctx.triggerKind === INVOKE) ||
-        (richHintNext && Date.now() - richHintNext < 1500);
-    richHintNext = 0;
     // Фильтруем САМИ: доверие фильтру редактора сыграло злую шутку —
     // он в этом окружении показывает список целиком. Префикс предсказуем:
     // только то, что начинается со слова (регистр не важен, кириллица тоже).
