@@ -481,7 +481,7 @@ function collectProjectNames(doc) {
     return names;
 }
 
-function provideSoftHints(doc, pos) {
+function provideSoftHints(doc, pos, ctx) {
     // Выключаемо настройкой kinii.hints.
     if (!vscode.workspace.getConfiguration('kinii').get('hints', true)) {
         say('подсказки: выключены настройкой kinii.hints');
@@ -490,11 +490,14 @@ function provideSoftHints(doc, pos) {
     // Не подсказываем внутри комментария.
     const before = doc.getText(new vscode.Range(new vscode.Position(pos.line, 0), pos));
     if (before.lastIndexOf('//') >= 0) return null;
-    // Свои имена — синхронно из кэша; пополнение фоном к СЛЕДУЮЩЕМУ ходу.
+    // Свой слой — синхронно из кэша; пополнение фоном к СЛЕДУЮЩЕМУ ходу.
     const own = collectProjectNames(doc);
     // Телеметрия меню: слово + сколько чего отдали (смотри Output → KINII).
     const m = /[A-Za-zА-Яа-яЁё0-9_]+$/.exec(before);
     const word = m ? m[0] : '';
+    // Режим вида: Ctrl+Space (Invoke) — широкий список с описанием/примером;
+    // набор буквы-триггером — компактный, чтобы не мешать печатанию кода.
+    const rich = ctx && ctx.triggerKind === vscode.CompletionTriggerKind.Invoke;
     // Фильтруем САМИ: доверие фильтру редактора сыграло злую шутку —
     // он в этом окружении показывает список целиком. Префикс предсказуем:
     // только то, что начинается со слова (регистр не важен, кириллица тоже).
@@ -506,21 +509,27 @@ function provideSoftHints(doc, pos) {
         if (!byPrefix(label)) continue;
         const it = new vscode.CompletionItem(label, vscode.CompletionItemKind.Snippet);
         it.insertText = new vscode.SnippetString(snippet);
-        it.detail = 'KINII: ' + detail;
         it.sortText = '0' + label; // примеры — выше обычных имен из файла
+        if (rich) it.detail = 'KINII: ' + detail;
         items.push(it);
         ++given;
     }
     for (const n of own) {
         if (!byPrefix(n.name)) continue;
         const it = new vscode.CompletionItem(n.name, n.kind);
-        it.detail = 'твоё имя · ' + (n.file ? n.file + ':' + n.line : 'этот файл') +
-            ' — ' + n.decl;
+        if (rich) {
+            const where = n.file ? 'файл ' + n.file + ', строка ' + n.line
+                                 : 'в этом файле';
+            it.detail = 'твоё имя · ' + where + ' — ' + n.decl;
+            it.documentation = new vscode.MarkdownString(
+                '```kinii\n' + n.decl + '\n```\n' + where);
+        }
         it.sortText = '1' + n.name;
         items.push(it);
         ++given;
     }
-    say(`подсказки: слово '${word}' | отдали ${given} (${HINTS.length} стата + ${own.length} своих)`);
+    say(`подсказки: слово '${word}' | отдали ${given} (${HINTS.length} стата + ${own.length} своих)` +
+        (rich ? ' | богатый вид (Ctrl+Space)' : ' | компактный вид'));
     if (!given) return null; // слова нет и совпадений нет — меню не мешает набору
     refreshProjectSymbols(doc).catch(() => { }); // прогрев, ответ придёт в следующий ход
     return items;
