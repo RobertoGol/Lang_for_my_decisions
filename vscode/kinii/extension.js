@@ -14,6 +14,25 @@ let server = null;           // { proc, buffer, onNotify }
 let collection = null;       // vscode.DiagnosticCollection
 const openDocs = new Map();  // uri -> version (открытые у нас документы)
 
+let nextRequestId = 1000;
+
+// Запрос-ответ: hover и прочее. resolve сработает в handleRpc по id.
+function request(method, params) {
+    if (!server) return Promise.resolve(null);
+    const id = nextRequestId++;
+    return new Promise((resolve) => {
+        server.pending.set(id, resolve);
+        sendServer({ jsonrpc: '2.0', id, method, params });
+        // сервер молчит -> отдаём null (не вечно ждем)
+        setTimeout(() => {
+            if (server && server.pending.has(id)) {
+                server.pending.delete(id);
+                resolve(null);
+            }
+        }, 8000);
+    });
+}
+
 // ---------- фрейминг ----------
 
 function sendServer(obj) {
@@ -50,6 +69,13 @@ function handleRpc(msg) {
         const f = server.onInit;
         server.onInit = null;
         f(true);
+        return;
+    }
+    // Ответ на наш запрос-ответ (hover и прочее).
+    if (msg.id !== undefined && server && server.pending.has(msg.id)) {
+        const resolve = server.pending.get(msg.id);
+        server.pending.delete(msg.id);
+        resolve(msg.result !== undefined ? msg.result : null);
         return;
     }
     if (msg.method === 'textDocument/publishDiagnostics') {
@@ -99,7 +125,7 @@ function startServer() {
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
     });
-    server = { proc, buffer: Buffer.alloc(0) };
+    server = { proc, buffer: Buffer.alloc(0), pending: new Map() };
     proc.stderr.on('data', () => { /* логи сервера игнорируем */ });
     proc.on('exit', () => { server = null; });
     pumpOutput();
@@ -177,6 +203,26 @@ function activate(context) {
 
     context.subscriptions.push(
         vscode.workspace.onDidOpenTextDocument((d) => { if (d.languageId === 'kinii') didOpen(d); }),
+        vscode.languages.registerHoverProvider('kinii', {
+            // Подсказка под строкой: навёл/поставил курсор на имя — сервер
+            // отвечает сигнатурой и местом объявления. Никаких выпадающих
+            // списков автодополнения — они не нужны.
+            provideHover(doc, pos) {
+                return request('textDocument/hover', {
+                    textDocument: { uri: doc.uri.toString() },
+                    position: { line: pos.line, character: pos.character },
+                }).then((h) => {
+                    if (!h || !h.contents || !h.contents.value) return null;
+                    const out = new vscode.Hover(
+                        new vscode.MarkdownString(h.contents.value));
+                    if (h.range) {
+                        const s = h.range.start, e = h.range.end;
+                        out.range = new vscode.Range(s.line, s.character, e.line, e.character);
+                    }
+                    return out;
+                });
+            },
+        }),
         vscode.workspace.onDidChangeTextDocument((e) => {
             if (e.document.languageId === 'kinii') didChange(e.document);
         }),

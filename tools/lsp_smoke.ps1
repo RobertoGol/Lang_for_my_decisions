@@ -28,7 +28,11 @@ $msgs = @(
      $uri + '","version":2},"contentChanges":[{"text":"let y = 5;\nconst PI = 3;\n"}]}}'),
     ('{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"' +
      $uri + '","languageId":"kinii","version":3,"text":"import \"util.ctos\";\nfn double_of(x: u32) -> u32 { return x; }\n"}}}'),
-    '{"jsonrpc":"2.0","id":2,"method":"shutdown"}',
+    ('{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"' +
+     $uri + '","languageId":"kinii","version":4,"text":"import \"util.ctos\";\nlet n = double_of(21);\nlet tms2 = sys.time.now();\n"}}}'),
+    '{"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{"textDocument":{"uri":"file:///G:/Project/Game/KINII/examples/lsp_smoke_tmp.vc"},"position":{"line":1,"character":10}}}',
+    '{"jsonrpc":"2.0","id":3,"method":"textDocument/hover","params":{"textDocument":{"uri":"file:///G:/Project/Game/KINII/examples/lsp_smoke_tmp.vc"},"position":{"line":2,"character":16}}}',
+    '{"jsonrpc":"2.0","id":4,"method":"shutdown"}',
     '{"jsonrpc":"2.0","method":"exit"}'
 )
 

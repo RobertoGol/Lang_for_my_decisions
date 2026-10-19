@@ -10,6 +10,7 @@
 
 #include "kinii/diagnostic.h"
 #include "kinii/driver.h"
+#include "kinii/lexer.h"
 #include "kinii/sema.h"
 
 #include <cstdio>
@@ -174,6 +175,51 @@ std::string json_escape(const std::string& s) {
     return r;
 }
 
+// ---------- встроенная библиотека (описания для подсказок) ----------
+
+// Описания из SPEC.md: то, что не объявляется в коде пользователя.
+struct BuiltinDoc {
+    std::string match;
+    std::string text;
+};
+
+const std::vector<BuiltinDoc>& builtin_docs() {
+    static const std::vector<BuiltinDoc> docs = {
+        {"print",  "print(a, b, ...) — печатает аргументы подряд и переводит строку"},
+        {"len",    "len(x) — длина списка/строки"},
+        {"range",  "range(n) — диапазон для for/comp"},
+        {"console.print", "console.print(a, b, ...) — то же, что print (имя для [SYS]-слоя)"},
+        {"console.read_input", "console.read_input(\"подсказка\") — строка со стандартного ввода"},
+        {"console.read_line",  "console.read_line() — строка со стандартного ввода"},
+        {"sys.exit", "sys.exit(code) — завершить программу с кодом выхода"},
+        {"sys.time.now", "sys.time.now() — время в миллисекундах (u64)"},
+        {"sys.rnd.next", "sys.rnd.next(n) — случайное число 0..n-1"},
+        {"u8",  "u8 — беззнаковое, 1 байт"},
+        {"u16", "u16 — беззнаковое, 2 байта"},
+        {"u32", "u32 — беззнаковое, 4 байта"},
+        {"u64", "u64 — беззнаковое, 8 байт"},
+        {"string", "string — строка (в бэкенде std::string)"},
+        {"bool",   "bool — да/нет"},
+        {"list",   "list<T> — динамический список"},
+        {"node",   "node — узел: функции видны всему проекту; инструкции тела работают своим потоком"},
+        {"isolate","isolate — изолят: отдельный поток; app_entry всегда дожидается его (join)"},
+    };
+    return docs;
+}
+
+std::string builtin_hover(const std::string& name) {
+    // полный путь: "sys.time.now" — или последний сегмент: "sys", "u32"
+    for (const auto& d : builtin_docs())
+        if (name == d.match) return d.text;
+    size_t dot = name.rfind('.');
+    if (dot != std::string::npos) {
+        std::string seg = name.substr(dot + 1);
+        for (const auto& d : builtin_docs())
+            if (seg == d.match) return d.text;
+    }
+    return "";
+}
+
 std::string jstr(const std::string& s) { return "\"" + json_escape(s) + "\""; }
 
 std::string jint(long long n) {
@@ -308,8 +354,9 @@ void check_file(const std::string& path, const std::string& uri,
     publish(diags, uri);
 }
 
-// ---------- ответ ----------
+// ---------- подсказка под строкой (textDocument/hover) ----------
 
+// Ответ на запрос с id.
 void respond(const Json& id, const std::string& result_json) {
     std::string body = "{\"jsonrpc\":\"2.0\",\"id\":";
     if (id.kind == Json::Num) body += jint((long long)id.n);
@@ -317,6 +364,231 @@ void respond(const Json& id, const std::string& result_json) {
     else body += "0";
     body += ",\"result\":" + result_json + "}";
     send(body);
+}
+
+// Документы, о которых сервер знает (didOpen/didChange), — hover без диска.
+std::map<std::string, std::string> g_open_docs;
+
+std::string join_comma(const std::vector<std::string>& v) {
+    std::string r;
+    for (size_t i = 0; i < v.size(); ++i) {
+        if (i) r += ", ";
+        r += v[i];
+    }
+    return r;
+}
+
+std::string type_to_text(const TypeExpr* t) {
+    if (!t) return "";
+    switch (t->kind) {
+        case TypeExpr::Named: return t->name;
+        case TypeExpr::Cell:
+            return (t->name.empty() ? "cell" : "cell:" + t->name);
+        case TypeExpr::List:
+            return "list<" + type_to_text(t->elem.get()) + ">";
+        case TypeExpr::Array:
+            return type_to_text(t->elem.get()) + "[" + std::to_string(t->array_len) + "]";
+    }
+    return "?";
+}
+
+// Объявление по имени поверх AST (в т.ч. функции, поднятые из node/isolate).
+const Stmt* find_decl(const Stmt* root, const std::string& name) {
+    if (!root) return nullptr;
+    for (const auto& s : root->body) {
+        if (s && s->name == name) return s.get();
+        if (s && (s->kind == Stmt::NodeDecl || s->kind == Stmt::IsolateDecl) &&
+            s->block) {
+            for (const auto& inner : s->block->body)
+                if (inner && inner->kind == Stmt::FnDecl && inner->name == name)
+                    return inner.get();
+        }
+    }
+    return nullptr;
+}
+
+std::string render_fn_sig(const Stmt& s) {
+    std::string r = s.is_pub ? "pub fn " : "fn ";
+    r += s.name + "(";
+    for (size_t i = 0; i < s.params.size(); ++i) {
+        if (i) r += ", ";
+        r += s.params[i].name;
+        if (s.params[i].type) r += ": " + type_to_text(s.params[i].type.get());
+    }
+    r += ")";
+    if (s.ret) r += " -> " + type_to_text(s.ret.get());
+    return r;
+}
+
+std::string render_struct_sig(const Stmt& s) {
+    std::string r = "struct " + s.name + " { ";
+    for (size_t i = 0; i < s.fields.size(); ++i) {
+        if (i) r += "; ";
+        r += s.fields[i].name;
+        if (s.fields[i].type) r += ": " + type_to_text(s.fields[i].type.get());
+    }
+    r += (s.fields.empty() ? "}" : " }");
+    return r;
+}
+
+std::string render_enum_sig(const Stmt& s) {
+    return "enum " + s.name + " { " + join_comma(s.enum_items) + " }";
+}
+
+// Имя файла без каталога — для «объявлен в файле X».
+std::string file_name_of(const std::string& path) {
+    size_t s = path.find_last_of('/');
+    return s == std::string::npos ? path : path.substr(s + 1);
+}
+
+// Основной расчёт подсказки: имя под курсором → что оно такое → markdown.
+// Если сказать нечего — честный null.
+void hover_at(const std::string& path, const std::string& uri,
+              const std::string& text, long long line, long long col,
+              const Json& id) {
+    DiagnosticEngine diags;
+    SemaResult sema;
+    sema.project_wide = true;
+    Driver driver(diags, sema);
+    driver.set_source_override(path, text);
+    Span empty;
+    FileId hfid = driver.compile(path, empty);
+    driver.finalize();
+    if (hfid == kNoFile) { respond(id, "null"); return; }
+    publish(diags, uri); // диагностики не отстают и при подсказке
+
+    // Токен под курсором (позиции LSP 0-базные → KINII 1-базные).
+    uint32_t ln = (uint32_t)(line + 1);
+    uint32_t cl = (uint32_t)(col + 1);
+
+    DiagnosticEngine lex_diags; // ошибки лексера тихо: их уже показал check
+    FileId lex_fid = lex_diags.add_file(path, text);
+    std::vector<Token> toks = lex_file(lex_fid, text, lex_diags);
+
+    long long hit = -1;
+    for (size_t i = 0; i < toks.size(); ++i) {
+        const Token& t = toks[i];
+        if (t.type == Tok::Eof) break;
+        bool after_begin =
+            (t.begin.line < ln) || (t.begin.line == ln && t.begin.col <= cl);
+        bool before_end =
+            (t.end.line > ln) || (t.end.line == ln && t.end.col >= cl);
+        if (after_begin && before_end) { hit = (long long)i; break; }
+    }
+    if (hit < 0 || toks[(size_t)hit].type != Tok::Ident) {
+        respond(id, "null");
+        return;
+    }
+    const std::string name = toks[(size_t)hit].text;
+
+    // Полный путь через точки: hover на "now" у sys.time.now → "sys.time.now".
+    std::string dotted = name;
+    {
+        size_t a = (size_t)hit;
+        while (a >= 2 && toks[a - 1].type == Tok::Dot &&
+               toks[a - 2].type == Tok::Ident)
+            a -= 2;
+        std::string chain = toks[a].text;
+        size_t k = a;
+        while (k < (size_t)hit) {
+            k += 2; // Dot, Ident
+            chain += "." + toks[k].text;
+        }
+        size_t r = (size_t)hit + 1;
+        while (r + 1 < toks.size() && toks[r].type == Tok::Dot &&
+               toks[r + 1].type == Tok::Ident) {
+            chain += "." + toks[r + 1].text;
+            r += 2;
+        }
+        if (chain.size() > dotted.size()) dotted = chain;
+    }
+
+    // 1) Встроенная библиотека (полный путь, затем просто имя).
+    std::string info = builtin_hover(dotted);
+    std::string decl_note;
+    if (info.empty()) {
+        // 2) Таблица символов проекта.
+        const Symbol* sym = nullptr;
+        const FileSema* decl_file = nullptr;
+        if (hfid < sema.files.size()) {
+            auto it = sema.files[hfid].top_decls.find(name);
+            if (it != sema.files[hfid].top_decls.end()) {
+                sym = &it->second;
+                decl_file = &sema.files[hfid];
+            }
+        }
+        if (!sym) {
+            auto it = sema.global.find(name);
+            if (it != sema.global.end()) {
+                sym = &it->second;
+                if (sym->file < sema.files.size())
+                    decl_file = &sema.files[sym->file];
+            }
+        }
+        if (sym) {
+            if (sym->kind == Symbol::Field) {
+                // в таблице поля лежат как "Point.x"
+                size_t d = sym->name.find('.');
+                std::string owner =
+                    d == std::string::npos ? "" : sym->name.substr(0, d);
+                info = "поле '" + name + "' структуры " + owner +
+                       (sym->type_text.empty() ? "" : " — " + sym->type_text);
+            } else {
+                const Stmt* def = find_decl(driver.ast_of(sym->file), name);
+                switch (sym->kind) {
+                    case Symbol::Fn:
+                        if (def && def->kind == Stmt::FnDecl) {
+                            info = render_fn_sig(*def);
+                        } else {
+                            info = "fn " + name + "()";
+                            if (!sym->type_text.empty() && sym->type_text != "void")
+                                info += " -> " + sym->type_text;
+                        }
+                        break;
+                    case Symbol::Struct:
+                        if (sym->type_text == "node" || sym->type_text == "isolate") {
+                            for (const auto& d : builtin_docs())
+                                if (d.match == sym->type_text) info = d.text;
+                            info = sym->type_text + " " + name +
+                                   (info.empty() ? "" : " — " + info);
+                        } else {
+                            info = def ? render_struct_sig(*def) : "struct " + name;
+                        }
+                        break;
+                    case Symbol::Enum:
+                        info = def ? render_enum_sig(*def) : "enum " + name;
+                        break;
+                    case Symbol::Var:
+                    case Symbol::Const:
+                        info = (sym->is_const ? "const " : "let ") + name +
+                               (sym->type_text.empty()
+                                    ? " (тип выводится сам)"
+                                    : (": " + sym->type_text));
+                        break;
+                    default:
+                        info = name + (sym->type_text.empty() ? "" : " — " + sym->type_text);
+                }
+            }
+            if (sym->span.file != kNoFile && sym->span.begin.line) {
+                decl_note = sym->file == hfid
+                                ? "объявлен в этом файле, строка " +
+                                      std::to_string((unsigned)sym->span.begin.line)
+                                : "объявлен в файле '" +
+                                      (decl_file ? file_name_of(decl_file->path)
+                                                 : "") +
+                                      "', строка " +
+                                      std::to_string((unsigned)sym->span.begin.line);
+            }
+        }
+    }
+
+    if (info.empty()) { respond(id, "null"); return; }
+
+    std::string md = "```kinii\n" + info + "\n```";
+    if (!decl_note.empty()) md += "\n\n" + decl_note;
+    respond(id,
+            "{\"contents\":{\"kind\":\"markdown\",\"value\":\"" +
+                json_escape(md) + "\"}}");
 }
 
 // ---------- цикл ----------
@@ -402,7 +674,10 @@ int run() {
             std::string text;
             const Json* tx = jf(*td, "text");
             if (tx && tx->kind == Json::Str) text = tx->s;
-            if (!uri.empty()) check_file(uri_to_path(uri), uri, text);
+            if (!uri.empty()) {
+                g_open_docs[uri] = text;
+                check_file(uri_to_path(uri), uri, text);
+            }
             continue;
         }
 
@@ -413,8 +688,33 @@ int run() {
             std::string uri = jf(*td, "uri") ? jf(*td, "uri")->s : "";
             const Json* tx = jf(changes->arr.back(), "text");
             if (tx && tx->kind == Json::Str && !uri.empty()) {
+                g_open_docs[uri] = tx->s;
                 check_file(uri_to_path(uri), uri, tx->s);
             }
+            continue;
+        }
+
+        if (name == "textDocument/hover") {
+            const Json* td = jf(*params, "textDocument");
+            const Json* pos = jf(*params, "position");
+            const Json* id = idv;
+            if (!id) continue; // hover — всегда запрос, id обязателен
+            std::string uri = td && td->kind == Json::Obj
+                                  ? (jf(*td, "uri") ? jf(*td, "uri")->s : "")
+                                  : "";
+            auto doc = g_open_docs.find(uri);
+            std::string text =
+                doc != g_open_docs.end() ? doc->second : std::string();
+            if (text.empty() || !pos || pos->kind != Json::Obj) {
+                respond(*id, "null");
+                continue;
+            }
+            long long line = 0, chr = 0;
+            const Json* jline = jf(*pos, "line");
+            const Json* jchar = jf(*pos, "character");
+            if (jline && jline->kind == Json::Num) line = (long long)jline->n;
+            if (jchar && jchar->kind == Json::Num) chr = (long long)jchar->n;
+            hover_at(uri_to_path(uri), uri, text, line, chr, *id);
             continue;
         }
 
