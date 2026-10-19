@@ -368,9 +368,10 @@ const SUGGEST_TRIGGER_CHARS = (() => {
 })();
 
 // Флажок «следующий вызов провайдера — богатый вид (описание+пример)».
-// Ставится командой kinii.richHints (наша запись Ctrl+Space в keybindings),
-// потому что редактор путает triggerKind при явном вызове.
-let richHintNext = false;
+// Ставится командой kinii.richHints (наша запись Ctrl+Space) и живёт 1.5 с:
+// редактор путает triggerKind при явном вызове, флажок без срока жизни
+// протекал в вызов при наборе — меню «прыгало» между двумя видами.
+let richHintNext = 0; // метка времени, 0 = нет
 
 // Второй слой: собственные объявления (fn/let/const/struct/enum/node/isolate)
 // из редактируемого буфера + соседних *.vc/*.ctos файлов каталога. Соседей
@@ -507,8 +508,9 @@ function provideSoftHints(doc, pos, ctx) {
     // rich = явный Ctrl+Space ЛИБО моя команда kinii.richHints, повешенная
     // на Ctrl+Space: она ставит флажок до вызова провайдера — не гадаем,
     // какой triggerKind решит прислать редактор.
-    const rich = (ctx && ctx.triggerKind === INVOKE) || richHintNext;
-    richHintNext = false;
+    const rich = (ctx && ctx.triggerKind === INVOKE) ||
+        (richHintNext && Date.now() - richHintNext < 1500);
+    richHintNext = 0;
     // Фильтруем САМИ: доверие фильтру редактора сыграло злую шутку —
     // он в этом окружении показывает список целиком. Префикс предсказуем:
     // только то, что начинается со слова (регистр не важен, кириллица тоже).
@@ -681,7 +683,7 @@ function activate(context) {
         // Богатый вид подсказок (описание + пример) — наша запись Ctrl+Space.
         // Ставит флажок ДО вызова провайдера: редактор не путает triggerKind.
         vscode.commands.registerCommand('kinii.richHints', () => {
-            richHintNext = true;
+            richHintNext = Date.now();
             void vscode.commands.executeCommand('editor.action.triggerSuggest');
         }),
         // Мягкое меню: перевести подтверждение подсказок на Tab/клик,
