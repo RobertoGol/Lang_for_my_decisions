@@ -10,6 +10,11 @@ const fs = require('fs');
 
 const SEVERITY = { 1: vscode.DiagnosticSeverity.Error, 2: vscode.DiagnosticSeverity.Warning, 3: vscode.DiagnosticSeverity.Information };
 
+let log = null;              // vscode.OutputChannel — что делает сервер
+function say(msg) {
+    if (log) log.appendLine(msg);
+}
+
 let server = null;           // { proc, buffer, onNotify }
 let collection = null;       // vscode.DiagnosticCollection
 const openDocs = new Map();  // uri -> version (открытые у нас документы)
@@ -91,6 +96,7 @@ function handleRpc(msg) {
             item.code = d.code;
             return item;
         });
+        say(`диагностики: ${uri.path.split('/').pop()} → ${diags.length} шт.`);
         collection.set(uri, diags);
         return;
     }
@@ -116,18 +122,29 @@ function startServer() {
     if (server) return Promise.resolve(true);
     const kinic = resolveKinic();
     if (!kinic) {
+        say('kinic не найден (настройка kinii.serverPath: ' +
+            vscode.workspace.getConfiguration('kinii').get('serverPath') + ')');
         vscode.window.showWarningMessage(
             'kinic не найден: укажите путь в настройке kinii.serverPath');
         return Promise.resolve(false);
     }
+    if (!log) log = vscode.window.createOutputChannel('KINII');
     const proc = spawn(kinic, ['lsp'], {
         cwd: (vscode.workspace.workspaceFolders || [])[0]?.uri.fsPath || '.',
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
     });
+    say(`сервер запущен: ${kinic}`);
     server = { proc, buffer: Buffer.alloc(0), pending: new Map() };
-    proc.stderr.on('data', () => { /* логи сервера игнорируем */ });
-    proc.on('exit', () => { server = null; });
+    proc.stderr.on('data', (d) => say(`[сервер] ${d.toString().trim()}`));
+    proc.on('error', (e) => {
+        say(`ошибка запуска сервера: ${e.message}`);
+        vscode.window.showErrorMessage('KINII: сервер kinic не запустился — см. панель Output → KINII');
+    });
+    proc.on('exit', (code) => {
+        say(`сервер остановлен, код ${code}`);
+        server = null;
+    });
     pumpOutput();
 
     const root = (vscode.workspace.workspaceFolders || [])[0];
@@ -171,6 +188,7 @@ function sendDidOpen(doc) {
 }
 
 function didOpen(doc) {
+    say(`didOpen: ${path.basename(doc.uri.fsPath)} (сервер ${server ? 'жив' : 'ещё не поднят'})`);
     openDocs.set(doc.uri.toString(), doc.version);
     startServer().then((ok) => { if (ok) sendDidOpen(doc); });
 }
