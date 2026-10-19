@@ -497,7 +497,9 @@ function provideSoftHints(doc, pos, ctx) {
     const word = m ? m[0] : '';
     // Режим вида: Ctrl+Space (Invoke) — широкий список с описанием/примером;
     // набор буквы-триггером — компактный, чтобы не мешать печатанию кода.
-    const rich = ctx && ctx.triggerKind === vscode.CompletionTriggerKind.Invoke;
+    const INVOKE = (vscode.CompletionTriggerKind && vscode.CompletionTriggerKind.Invoke) || 0;
+    const kind = ctx ? ctx.triggerKind : 'нет-ctx';
+    const rich = ctx && ctx.triggerKind === INVOKE;
     // Фильтруем САМИ: доверие фильтру редактора сыграло злую шутку —
     // он в этом окружении показывает список целиком. Префикс предсказуем:
     // только то, что начинается со слова (регистр не важен, кириллица тоже).
@@ -529,7 +531,7 @@ function provideSoftHints(doc, pos, ctx) {
         ++given;
     }
     say(`подсказки: слово '${word}' | отдали ${given} (${HINTS.length} стата + ${own.length} своих)` +
-        (rich ? ' | богатый вид (Ctrl+Space)' : ' | компактный вид'));
+        ` | вид kind=${kind}`);
     if (!given) return null; // слова нет и совпадений нет — меню не мешает набору
     refreshProjectSymbols(doc).catch(() => { }); // прогрев, ответ придёт в следующий ход
     return items;
