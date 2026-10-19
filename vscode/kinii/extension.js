@@ -543,7 +543,12 @@ function formatDocument(edit) {
 function activate(context) {
     collection = vscode.languages.createDiagnosticCollection('kinic');
     context.subscriptions.push(collection);
-    say('kinii extension 0.3.0: активация, регистрирую провайдеры hover/hints/fmt');
+    say('kinii подсказки v5 (node-fs прогрев на активации): активируюсь');
+    // Прогрев кэша имен до первого хода: документы, открытые до перезагрузки, НЕ тянут
+    // событие didOpen — поленимся по всем открытым сразу.
+    for (const d of vscode.workspace.textDocuments) {
+        if (d.languageId === 'kinii') refreshProjectSymbols(d).catch(() => { });
+    }
 
     context.subscriptions.push(
         vscode.workspace.onDidOpenTextDocument((d) => {
