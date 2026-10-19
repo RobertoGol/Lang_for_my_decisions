@@ -352,6 +352,95 @@ const HINTS = [
     ['#if', '#if ${1:условие}\n$2\n#endif', 'директива компилятора'],
 ];
 
+// ---------- имена проекта в меню подсказок ----------
+
+// Второй слой: собственные объявления (fn/let/const/struct/enum/node/isolate)
+// из редактируемого буфера + соседних *.vc/*.ctos файлов каталога. Соседей
+// читаем с кэшем по mtime — на каждый ход печатания лезть в диск не надо.
+// Сорт-группа '1' — ниже статической галереи (у галереи '0').
+
+const KINII_KIND_OF = {
+    fn: vscode.CompletionItemKind.Function,
+    handler: vscode.CompletionItemKind.Function,
+    entry: vscode.CompletionItemKind.Function,
+    struct: vscode.CompletionItemKind.Struct,
+    enum: vscode.CompletionItemKind.Enum,
+    node: vscode.CompletionItemKind.Module,
+    isolate: vscode.CompletionItemKind.Module,
+    let: vscode.CompletionItemKind.Variable,
+    const: vscode.CompletionItemKind.Constant,
+};
+
+function scanDeclNames(text, fileLabel) {
+    const out = [];
+    text.split('\n').forEach((raw, i) => {
+        const line = raw.replace(/\/\/.*$/, '');
+        let m = /^(?:\s*)(pub\s+|async\s+)?(fn|handler|entry|struct|enum|node|isolate)\s+([A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё_0-9]*)/.exec(line);
+        if (m) {
+            out.push({
+                name: m[3],
+                kind: KINII_KIND_OF[m[2]] || vscode.CompletionItemKind.Function,
+                decl: (m[1] ? m[1].trim() + ' ' : '') + m[2] + ' ' + m[3],
+                file: fileLabel,
+                line: i + 1,
+            });
+            return;
+        }
+        // let имя = ...; let u32 имя = ...; let u32[1024] имя; let list<string> имя = ...;
+        // let имя: ptr = ...; let cell: raw имя = ...; const ИМЯ = ...;
+        // Правило имени: всё до '=' / ';' — «шапка»; имя — последний идент
+        // шапки БЕЗ «:типа» (и после суффикса 'cell: raw').
+        m = /^(?:\s*)(let|const)\s+([^=;\n]+?)\s*(?==|;)/.exec(line);
+        if (m) {
+            let part = m[2];
+            const cellraw = /^\s*cell\s*:\s*raw\b/.exec(part);
+            if (cellraw) part = part.slice(cellraw[0].length); // 'raw имя' → имя
+            const colon = part.indexOf(':');
+            if (colon >= 0) part = part.slice(0, colon);       // 'имя: тип' → имя
+            const nm = /([A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё_0-9]*)\s*$/.exec(part);
+            if (nm) {
+                out.push({
+                    name: nm[1],
+                    kind: KINII_KIND_OF[m[1]],
+                    decl: m[1] + ' ' + nm[1],
+                    file: fileLabel,
+                    line: i + 1,
+                });
+            }
+        }
+    });
+    return out;
+}
+
+async function projectNames(doc) {
+    const names = scanDeclNames(doc.getText(), ''); // буфер — всегда свежий
+    const seen = new Set(names.map((n) => n.name));
+    try {
+        const dir = vscode.Uri.joinPath(doc.uri, '..');
+        const entries = await vscode.workspace.fs.readDirectory(dir);
+        for (const [name, type] of entries) {
+            if (!/\.(vc|ctos)$/i.test(name)) continue;
+            const furi = vscode.Uri.joinPath(dir, name);
+            let st;
+            try { st = await vscode.workspace.fs.stat(furi); } catch (e) { continue; }
+            const hit = projSymCache.get(furi.fsPath);
+            let list = hit && hit.mtime === st.mtime ? hit.list : null;
+            if (!list) {
+                try {
+                    const src = new TextDecoder('utf8').decode(
+                        await vscode.workspace.fs.readFile(furi));
+                    list = scanDeclNames(src, name);
+                    projSymCache.set(furi.fsPath, { mtime: st.mtime, list });
+                } catch (e) { continue; }
+            }
+            for (const n of list) {
+                if (!seen.has(n.name)) { seen.add(n.name); names.push(n); }
+            }
+        }
+    } catch (e) { /* каталога нет — достаточно буфера */ }
+    return names;
+}
+
 function provideSoftHints(doc, pos) {
     // Выключаемо настройкой kinii.hints.
     if (!vscode.workspace.getConfiguration('kinii').get('hints', true)) {
@@ -365,12 +454,24 @@ function provideSoftHints(doc, pos) {
     const prefix = before.slice(-Math.max(before.length, 8)).trimEnd();
     const m = /[A-Za-zА-Яа-яЁё0-9_]+$/.exec(prefix);
     say(`подсказки: запрос на префиксе '${m ? m[0] : ''}'`);
-    return HINTS.map(([label, snippet, detail]) => {
+    const items = HINTS.map(([label, snippet, detail]) => {
         const it = new vscode.CompletionItem(label, vscode.CompletionItemKind.Snippet);
         it.insertText = new vscode.SnippetString(snippet);
         it.detail = 'KINII: ' + detail;
         it.sortText = '0' + label; // примеры — выше обычных имен из файла
         return it;
+    });
+    // Подмешиваем свои имена проекта: ниже галереи, но рядом с набранным
+    // `dou` честно встанет твоя fn double_of из util.ctos.
+    return projectNames(doc).then((names) => {
+        for (const n of names) {
+            const it = new vscode.CompletionItem(n.name, n.kind);
+            it.detail = 'твоё имя · ' + (n.file ? n.file + ':' + n.line : 'этот файл') +
+                ' — ' + n.decl;
+            it.sortText = '1' + n.name;
+            items.push(it);
+        }
+        return items;
     });
 }
 
