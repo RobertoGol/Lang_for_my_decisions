@@ -414,16 +414,7 @@ function scanDeclNames(text, fileLabel) {
     return out;
 }
 
-async function projectNames(doc) {
-    let buf;
-    try {
-        buf = scanDeclNames(doc.getText(), ''); // буфер — всегда свежий
-    } catch (e) {
-        say('свои имена: буфер не прочёлся — ' + (e && e.message ? e.message : e));
-        buf = [];
-    }
-    const names = buf;
-    const seen = new Set(names.map((n) => n.name));
+async function refreshProjectSymbols(doc) {
     try {
         const dir = vscode.Uri.joinPath(doc.uri, '..');
         const entries = await vscode.workspace.fs.readDirectory(dir);
@@ -433,26 +424,38 @@ async function projectNames(doc) {
             let st;
             try { st = await vscode.workspace.fs.stat(furi); } catch (e) { continue; }
             const hit = projSymCache.get(furi.fsPath);
-            let list = hit && hit.mtime === st.mtime ? hit.list : null;
-            if (!list) {
-                try {
-                    const src = new TextDecoder('utf8').decode(
-                        await vscode.workspace.fs.readFile(furi));
-                    list = scanDeclNames(src, name);
-                    projSymCache.set(furi.fsPath, { mtime: st.mtime, list });
-                } catch (e) {
-                    say('свои имена: ' + name + ' не прочёлся — ' +
-                        (e && e.message ? e.message : e));
-                    continue;
-                }
-            }
-            for (const n of list) {
-                if (!seen.has(n.name)) { seen.add(n.name); names.push(n); }
+            if (hit && hit.mtime === st.mtime) continue; // кэш свеж
+            try {
+                const src = new TextDecoder('utf8').decode(
+                    await vscode.workspace.fs.readFile(furi));
+                const list = scanDeclNames(src, name);
+                projSymCache.set(furi.fsPath, { mtime: st.mtime, list });
+            } catch (e) {
+                say('свои имена: ' + name + ' не прочёлся — ' +
+                    (e && e.message ? e.message : e));
             }
         }
     } catch (e) {
         say('свои имена: каталог не прочёлся — ' + (e && e.message ? e.message : e));
-        /* достаточно буфера */
+    }
+}
+
+// Синхронный сбор имен: буфер + уже прогретый кэш соседей (без ожиданий).
+// Фон-пополнение помечаем как fire-and-forget: ОБЕЩАНИЕ НЕ ЖДЁМ и ронять не даём.
+function collectProjectNames(doc) {
+    let buf;
+    try {
+        buf = scanDeclNames(doc.getText(), ''); // буфер — всегда свежий
+    } catch (e) {
+        say('свои имена: буфер не прочёлся — ' + (e && e.message ? e.message : e));
+        buf = [];
+    }
+    const names = buf;
+    const seen = new Set(names.map((n) => n.name));
+    for (const { list } of projSymCache.values()) {
+        for (const n of list) {
+            if (!seen.has(n.name)) { seen.add(n.name); names.push(n); }
+        }
     }
     return names;
 }
@@ -477,27 +480,16 @@ function provideSoftHints(doc, pos) {
         it.sortText = '0' + label; // примеры — выше обычных имен из файла
         return it;
     });
-    // Свои имена — с предохранителем: что пришло за 250 мс, то и в меню;
-    // галерея показывается сразу, в любом падучем случае меню не умирает.
-    const namesP = projectNames(doc).then(
-        (n) => n,
-        (e) => {
-            say('свои имена: ошибка — ' + (e && e.message ? e.message : e));
-            return null;
-        });
-    const guardP = new Promise((resolve) => setTimeout(() => resolve(null), 250));
-    return Promise.race([namesP, guardP]).then((names) => {
-        if (names) {
-            for (const n of names) {
-                const it = new vscode.CompletionItem(n.name, n.kind);
-                it.detail = 'твоё имя · ' + (n.file ? n.file + ':' + n.line : 'этот файл') +
-                    ' — ' + n.decl;
-                it.sortText = '1' + n.name;
-                items.push(it);
-            }
-        }
-        return items;
-    });
+    // Свои имена — синхронно из кэша; пополнение фоном к СЛЕДУЮЩЕМУ ходу.
+    for (const n of collectProjectNames(doc)) {
+        const it = new vscode.CompletionItem(n.name, n.kind);
+        it.detail = 'твоё имя · ' + (n.file ? n.file + ':' + n.line : 'этот файл') +
+            ' — ' + n.decl;
+        it.sortText = '1' + n.name;
+        items.push(it);
+    }
+    refreshProjectSymbols(doc).catch(() => { }); // прогрев, ответ придёт в следующий ход
+    return items;
 }
 
 // ---------- форматтер (встроенный kinic fmt) ----------
@@ -533,7 +525,11 @@ function activate(context) {
     say('kinii extension 0.3.0: активация, регистрирую провайдеры hover/hints/fmt');
 
     context.subscriptions.push(
-        vscode.workspace.onDidOpenTextDocument((d) => { if (d.languageId === 'kinii') didOpen(d); }),
+        vscode.workspace.onDidOpenTextDocument((d) => {
+            if (d.languageId !== 'kinii') return;
+            didOpen(d);
+            refreshProjectSymbols(d).catch(() => { }); // прогрев своих имён к первому ходу
+        }),
         vscode.languages.registerHoverProvider('kinii', {
             // Подсказка под строкой: навёл/поставил курсор на имя — сервер
             // отвечает сигнатурой и местом объявления.

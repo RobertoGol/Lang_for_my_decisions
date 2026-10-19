@@ -5,7 +5,7 @@ const fs = require('fs');
 const extSrc = fs.readFileSync(
     path.join(__dirname, '..', 'vscode', 'kinii', 'extension.js'), 'utf8');
 const start = extSrc.indexOf('const KINII_KIND_OF = {');
-const end = extSrc.indexOf('async function projectNames');
+const end = extSrc.indexOf('async function refreshProjectSymbols');
 if (start < 0 || end < 0) { console.log('FAIL: не нашёл scanDeclNames в extension.js'); process.exit(1); }
 
 const vscode = {
