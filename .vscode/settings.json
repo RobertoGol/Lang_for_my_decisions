@@ -2,5 +2,6 @@
     "cmake.sourceDirectory": "G:/Project/Game/KINII/compiler",
     "editor.quickSuggestions": { "other": true, "comments": false, "strings": false },
     "editor.acceptSuggestionOnEnter": "off",
+    "editor.suggest.filterGraceful": false,
     "kinii.hints": true
 }
