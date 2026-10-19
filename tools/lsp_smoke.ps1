@@ -32,6 +32,12 @@ $msgs = @(
      $uri + '","languageId":"kinii","version":4,"text":"import \"util.ctos\";\nlet n = double_of(21);\nlet tms2 = sys.time.now();\n"}}}'),
     '{"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{"textDocument":{"uri":"file:///G:/Project/Game/KINII/examples/lsp_smoke_tmp.vc"},"position":{"line":1,"character":10}}}',
     '{"jsonrpc":"2.0","id":3,"method":"textDocument/hover","params":{"textDocument":{"uri":"file:///G:/Project/Game/KINII/examples/lsp_smoke_tmp.vc"},"position":{"line":2,"character":16}}}',
+    # F12: double_of объявлен в util.ctos (межфайловый прыжок)
+    '{"jsonrpc":"2.0","id":5,"method":"textDocument/definition","params":{"textDocument":{"uri":"file:///G:/Project/Game/KINII/examples/lsp_smoke_tmp.vc"},"position":{"line":1,"character":10}}}',
+    # F12: n — переменная из этого же файла
+    '{"jsonrpc":"2.0","id":6,"method":"textDocument/definition","params":{"textDocument":{"uri":"file:///G:/Project/Game/KINII/examples/lsp_smoke_tmp.vc"},"position":{"line":1,"character":4}}}',
+    # F12: sys.time.now — встроенный, определения нет (честный null)
+    '{"jsonrpc":"2.0","id":7,"method":"textDocument/definition","params":{"textDocument":{"uri":"file:///G:/Project/Game/KINII/examples/lsp_smoke_tmp.vc"},"position":{"line":2,"character":24}}}',
     '{"jsonrpc":"2.0","id":4,"method":"shutdown"}',
     '{"jsonrpc":"2.0","method":"exit"}'
 )

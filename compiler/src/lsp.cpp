@@ -591,6 +591,77 @@ void hover_at(const std::string& path, const std::string& uri,
                 json_escape(md) + "\"}}");
 }
 
+// ---------- переход к определению (textDocument/definition) ----------
+
+// Относительные пути у импортированных файлов подключаются к каталогу
+// запрошенного файла — иначе VS Code ищет util.ctos в корне диска.
+std::string abs_from_request(const std::string& request_path, const std::string& decl_path) {
+    if (decl_path.empty()) return decl_path;
+    if (decl_path[0] == '/' || decl_path.find(':') != std::string::npos) return decl_path;
+    size_t s = request_path.find_last_of('/');
+    std::string dir = s == std::string::npos ? std::string() : request_path.substr(0, s);
+    return dir.empty() ? decl_path : dir + "/" + decl_path;
+}
+
+// Имя под курсором → где оно объявлено (обычный Location для F12).
+void definition_at(const std::string& path, const std::string& uri,
+                   const std::string& text, long long line, long long col,
+                   const Json& id) {
+    DiagnosticEngine diags;
+    SemaResult sema;
+    sema.project_wide = true;
+    Driver driver(diags, sema);
+    driver.set_source_override(path, text);
+    Span empty;
+    FileId hfid = driver.compile(path, empty);
+    driver.finalize();
+    if (hfid == kNoFile) { respond(id, "null"); return; }
+    publish(diags, uri);
+
+    uint32_t ln = (uint32_t)(line + 1);
+    uint32_t cl = (uint32_t)(col + 1);
+
+    DiagnosticEngine lex_diags;
+    FileId lex_fid = lex_diags.add_file(path, text);
+    std::vector<Token> toks = lex_file(lex_fid, text, lex_diags);
+
+    long long hit = -1;
+    for (size_t i = 0; i < toks.size(); ++i) {
+        const Token& t = toks[i];
+        if (t.type == Tok::Eof) break;
+        bool after_begin =
+            (t.begin.line < ln) || (t.begin.line == ln && t.begin.col <= cl);
+        bool before_end =
+            (t.end.line > ln) || (t.end.line == ln && t.end.col >= cl);
+        if (after_begin && before_end) { hit = (long long)i; break; }
+    }
+    if (hit < 0 || toks[(size_t)hit].type != Tok::Ident) { respond(id, "null"); return; }
+    const std::string name = toks[(size_t)hit].text;
+
+    // Только имена проекта: встроенная библиотека (print, sys.*) не прыгает —
+    // её «определение» живёт в рантайме, честно отдаём null.
+    const Symbol* sym = nullptr;
+    if (hfid < sema.files.size()) {
+        auto it = sema.files[hfid].top_decls.find(name);
+        if (it != sema.files[hfid].top_decls.end()) sym = &it->second;
+    }
+    if (!sym) {
+        auto it = sema.global.find(name);
+        if (it != sema.global.end()) sym = &it->second;
+    }
+    if (!sym || sym->span.file == kNoFile || sym->span.begin.line == 0 ||
+        sym->file >= sema.files.size()) {
+        respond(id, "null");
+        return;
+    }
+    // Прыжок — на ИМЯ объявления (sym->span всегда держит имя, см. sema::declare).
+    std::string target = sym->file == hfid
+                             ? uri
+                             : path_to_uri(abs_from_request(
+                                   path, sema.files[sym->file].path));
+    respond(id, "{\"uri\":" + jstr(target) + ",\"range\":" + range_of(sym->span) + "}");
+}
+
 // ---------- цикл ----------
 
 bool read_headers(size_t& content_len) {
@@ -652,7 +723,8 @@ int run() {
             if (id)
                 respond(*id,
                         "{\"capabilities\":{"
-                        "\"textDocumentSync\":{\"openClose\":true,\"change\":1}"
+                        "\"textDocumentSync\":{\"openClose\":true,\"change\":1},"
+                        "\"definitionProvider\":true"
                         "},\"serverInfo\":{\"name\":\"kinic\",\"version\":\"0.1.0\"}}");
             continue;
         }
@@ -691,6 +763,30 @@ int run() {
                 g_open_docs[uri] = tx->s;
                 check_file(uri_to_path(uri), uri, tx->s);
             }
+            continue;
+        }
+
+        if (name == "textDocument/definition") {
+            const Json* td = jf(*params, "textDocument");
+            const Json* pos = jf(*params, "position");
+            const Json* id = idv;
+            if (!id) continue;
+            std::string uri = td && td->kind == Json::Obj
+                                  ? (jf(*td, "uri") ? jf(*td, "uri")->s : "")
+                                  : "";
+            auto doc = g_open_docs.find(uri);
+            std::string text =
+                doc != g_open_docs.end() ? doc->second : std::string();
+            if (text.empty() || !pos || pos->kind != Json::Obj) {
+                respond(*id, "null");
+                continue;
+            }
+            long long line = 0, chr = 0;
+            const Json* jline = jf(*pos, "line");
+            const Json* jchar = jf(*pos, "character");
+            if (jline && jline->kind == Json::Num) line = (long long)jline->n;
+            if (jchar && jchar->kind == Json::Num) chr = (long long)jchar->n;
+            definition_at(uri_to_path(uri), uri, text, line, chr, *id);
             continue;
         }
 

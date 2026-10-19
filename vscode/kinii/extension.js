@@ -433,6 +433,23 @@ function activate(context) {
         vscode.languages.registerCompletionItemProvider('kinii', {
             provideCompletionItems: provideSoftHints,
         }),
+        // F12 / Ctrl+клик / контекстное меню «Перейти к определению»:
+        // сервер возвращает файл+строку объявления (в т.ч. из другого файла).
+        vscode.languages.registerDefinitionProvider('kinii', {
+            provideDefinition(doc, pos) {
+                return request('textDocument/definition', {
+                    textDocument: { uri: doc.uri.toString() },
+                    position: { line: pos.line, character: pos.character },
+                }).then((res) => {
+                    if (!res || !res.uri) return null;
+                    const s = res.range?.start, e = res.range?.end;
+                    const range = s && e
+                        ? new vscode.Range(s.line, s.character, e.line, e.character)
+                        : new vscode.Range(0, 0, 0, 0);
+                    return new vscode.Location(vscode.Uri.parse(res.uri), range);
+                });
+            },
+        }),
         // Форматтер: Shift+Alt+F / команда «kinii.fmt» / форматирование при
         // сохранении, если включено editor.formatOnSave.
         vscode.languages.registerDocumentFormattingEditProvider('kinii', {
