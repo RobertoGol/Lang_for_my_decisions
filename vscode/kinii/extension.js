@@ -480,21 +480,34 @@ function provideSoftHints(doc, pos) {
     const own = collectProjectNames(doc);
     // Телеметрия меню: слово + сколько чего отдали (смотри Output → KINII).
     const m = /[A-Za-zА-Яа-яЁё0-9_]+$/.exec(before);
-    say(`подсказки: слово '${m ? m[0] : ''}' | стат ${HINTS.length} + своих ${own.length}, кэш-файлов ${projSymCache.size}`);
-    const items = HINTS.map(([label, snippet, detail]) => {
+    const word = m ? m[0] : '';
+    // Фильтруем САМИ: доверие фильтру редактора сыграло злую шутку —
+    // он в этом окружении показывает список целиком. Префикс предсказуем:
+    // только то, что начинается со слова (регистр не важен, кириллица тоже).
+    const lo = word.toLowerCase();
+    const byPrefix = (label) => !word || label.toLowerCase().startsWith(lo);
+    let given = 0;
+    const items = [];
+    for (const [label, snippet, detail] of HINTS) {
+        if (!byPrefix(label)) continue;
         const it = new vscode.CompletionItem(label, vscode.CompletionItemKind.Snippet);
         it.insertText = new vscode.SnippetString(snippet);
         it.detail = 'KINII: ' + detail;
         it.sortText = '0' + label; // примеры — выше обычных имен из файла
-        return it;
-    });
+        items.push(it);
+        ++given;
+    }
     for (const n of own) {
+        if (!byPrefix(n.name)) continue;
         const it = new vscode.CompletionItem(n.name, n.kind);
         it.detail = 'твоё имя · ' + (n.file ? n.file + ':' + n.line : 'этот файл') +
             ' — ' + n.decl;
         it.sortText = '1' + n.name;
         items.push(it);
+        ++given;
     }
+    say(`подсказки: слово '${word}' | отдали ${given} (${HINTS.length} стата + ${own.length} своих)`);
+    if (!given) return null; // слова нет и совпадений нет — меню не мешает набору
     refreshProjectSymbols(doc).catch(() => { }); // прогрев, ответ придёт в следующий ход
     return items;
 }
