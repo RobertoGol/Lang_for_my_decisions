@@ -415,12 +415,19 @@ function scanDeclNames(text, fileLabel) {
 }
 
 async function projectNames(doc) {
-    const names = scanDeclNames(doc.getText(), ''); // буфер — всегда свежий
+    let buf;
+    try {
+        buf = scanDeclNames(doc.getText(), ''); // буфер — всегда свежий
+    } catch (e) {
+        say('свои имена: буфер не прочёлся — ' + (e && e.message ? e.message : e));
+        buf = [];
+    }
+    const names = buf;
     const seen = new Set(names.map((n) => n.name));
     try {
         const dir = vscode.Uri.joinPath(doc.uri, '..');
         const entries = await vscode.workspace.fs.readDirectory(dir);
-        for (const [name, type] of entries) {
+        for (const [name] of entries) {
             if (!/\.(vc|ctos)$/i.test(name)) continue;
             const furi = vscode.Uri.joinPath(dir, name);
             let st;
@@ -433,13 +440,20 @@ async function projectNames(doc) {
                         await vscode.workspace.fs.readFile(furi));
                     list = scanDeclNames(src, name);
                     projSymCache.set(furi.fsPath, { mtime: st.mtime, list });
-                } catch (e) { continue; }
+                } catch (e) {
+                    say('свои имена: ' + name + ' не прочёлся — ' +
+                        (e && e.message ? e.message : e));
+                    continue;
+                }
             }
             for (const n of list) {
                 if (!seen.has(n.name)) { seen.add(n.name); names.push(n); }
             }
         }
-    } catch (e) { /* каталога нет — достаточно буфера */ }
+    } catch (e) {
+        say('свои имена: каталог не прочёлся — ' + (e && e.message ? e.message : e));
+        /* достаточно буфера */
+    }
     return names;
 }
 
@@ -463,15 +477,24 @@ function provideSoftHints(doc, pos) {
         it.sortText = '0' + label; // примеры — выше обычных имен из файла
         return it;
     });
-    // Подмешиваем свои имена проекта: ниже галереи, но рядом с набранным
-    // `dou` честно встанет твоя fn double_of из util.ctos.
-    return projectNames(doc).then((names) => {
-        for (const n of names) {
-            const it = new vscode.CompletionItem(n.name, n.kind);
-            it.detail = 'твоё имя · ' + (n.file ? n.file + ':' + n.line : 'этот файл') +
-                ' — ' + n.decl;
-            it.sortText = '1' + n.name;
-            items.push(it);
+    // Свои имена — с предохранителем: что пришло за 250 мс, то и в меню;
+    // галерея показывается сразу, в любом падучем случае меню не умирает.
+    const namesP = projectNames(doc).then(
+        (n) => n,
+        (e) => {
+            say('свои имена: ошибка — ' + (e && e.message ? e.message : e));
+            return null;
+        });
+    const guardP = new Promise((resolve) => setTimeout(() => resolve(null), 250));
+    return Promise.race([namesP, guardP]).then((names) => {
+        if (names) {
+            for (const n of names) {
+                const it = new vscode.CompletionItem(n.name, n.kind);
+                it.detail = 'твоё имя · ' + (n.file ? n.file + ':' + n.line : 'этот файл') +
+                    ' — ' + n.decl;
+                it.sortText = '1' + n.name;
+                items.push(it);
+            }
         }
         return items;
     });
