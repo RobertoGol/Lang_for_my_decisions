@@ -420,6 +420,22 @@ std::vector<Token> lex_file(FileId fid, const std::string& src, DiagnosticEngine
             case '}': out.push_back(L.make(Tok::RBrace, b, "}")); continue;
             default: {
                 Span sp = L.span_of(b);
+                if ((unsigned char)c & 0x80) {
+                    // Байты UTF-8 за пределами латыни: одна буква = одна ошибка.
+                    // Без этого на «сломано» сыпалось по две K0001 на букву
+                    // (ведущий + байты продолжения) и Problems тонул в шуме.
+                    std::string run(1, c);
+                    L.bump();
+                    while (is_cont((unsigned char)L.cur())) {
+                        run += L.cur();
+                        L.bump();
+                    }
+                    diags.error("K0001", "неизвестный символ '" + run + "'", sp)
+                        .hint("имена — латиницей (a-z, A-Z, _); кириллица — в комментариях и строках")
+                        .emit();
+                    out.push_back(L.make(Tok::Unknown, b, std::move(run)));
+                    continue;
+                }
                 std::string ch(1, c);
                 diags.error("K0001", "неизвестный символ '" + ch + "'", sp)
                     .hint("в KINII используются: буквы, цифры, _ и операторы + - * / % = < > ! & | ^ ~ ?")

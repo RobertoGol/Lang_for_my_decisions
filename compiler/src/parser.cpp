@@ -246,7 +246,16 @@ private:
 
         if (type_first) st->type = parse_type();
 
-        const Token& nm = expect(Tok::Ident, "имя переменной");
+        const Token& nm = peek();
+        if (nm.type == Tok::Ident) {
+            advance();
+        } else {
+            // Одна ясная ошибка на строку: имя не прочиталось (например, кириллица
+            // в имени). Дальше — перепрыг до конца строки, без каскада «ожидалось;»
+            expect(Tok::Ident, "имя переменной");
+            skip_line();
+            return st;
+        }
         st->name = nm.text;
         st->name_span = span_of(nm);
 
@@ -474,6 +483,10 @@ private:
         if (e) {
             st->span = span_loc(st->span.begin, e->span.end);
             st->kids.push_back(std::move(e));
+        } else {
+            // Выражения не было вовсе — «пропущена ';'» не в тему:
+            // причину уже назвал K1012/K0001, не множим диагностики.
+            return st;
         }
         if (!match(Tok::Semi)) {
             // Каретка — в конце выражения, где не хватает ';'.
@@ -945,6 +958,15 @@ private:
                 return e;
             }
             default: {
+                // Токен Unknown — мусор, который уже честно пометил лексер (K0001).
+                // Парсер молча перепрыгивает: без этого на каждую букву вне латыни
+                // сыпался каскад «ожидалось выражение», и Problems превращался в
+                // шум в десять ошибок на одну настоящую.
+                if (t.type == Tok::Unknown) {
+                    advance();
+                    while (check(Tok::Unknown) && !check(Tok::Eof)) advance();
+                    return parse_primary();
+                }
                 dg_.error("K1012", "ожидалось выражение (значение), а найдено " + describe(t),
                           span_of(t))
                     .hint("выражение может начинаться с: числа, строки, имени, (, [ или @")
