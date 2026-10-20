@@ -357,7 +357,25 @@ std::string CodeGen::gen_expr(const Expr* e) {
             if (e->kids[0] && e->kids[0]->kind == Expr::Ident &&
                 enums_.count(e->kids[0]->text))
                 return e->kids[0]->text + "::" + e->field;
-            // свойство слваря: m.size — число пар (без скобок, как у человека)
+            // Запись перебора словаря: pair.key -> .first, pair.value -> .second
+            if (e->kids[0] && e->kids[0]->kind == Expr::Ident) {
+                auto ev = entry_vars_.find(e->kids[0]->text);
+                if (ev != entry_vars_.end()) {
+                    if (e->field == "key")
+                        return gen_expr(e->kids[0].get()) + ".first";
+                    if (e->field == "value")
+                        return gen_expr(e->kids[0].get()) + ".second";
+                    saw_error_ = true;
+                    dg_.error("K3001",
+                              "у записи словаря нет поля '" + e->field + "'",
+                              e->span)
+                        .hint("запись даёт ровно два поля: .key (ключ) и "
+                              ".value (значение)")
+                        .emit();
+                    return "0";
+                }
+            }
+            // свойство словаря: m.size — число пар (без скобок, как у человека)
             if (e->kids[0] && e->kids[0]->kind == Expr::Ident) {
                 auto mv = map_vars_.find(e->kids[0]->text);
                 if (mv != map_vars_.end()) {
@@ -515,6 +533,11 @@ void CodeGen::gen_stmt(Stmt* s) {
 
         case Stmt::ForIn: {
             std::string src = s->kids.size() ? gen_expr(s->kids[0].get()) : "";
+            // Перебор словаря: элементы — пары, читаемые как .key / .value
+            const bool over_map = !s->kids.empty() &&
+                                  s->kids[0]->kind == Expr::Ident &&
+                                  map_vars_.count(s->kids[0]->text) > 0;
+            if (over_map) entry_vars_.insert(s->name);
             line("for (auto& " + s->name + " : " + src + ") {");
             ind_++;
             if (!s->body.empty() && s->body[0] && s->body[0]->kind == Stmt::Block)
@@ -522,6 +545,7 @@ void CodeGen::gen_stmt(Stmt* s) {
             else
                 gen_body(s->body);
             ind_--;
+            if (over_map) entry_vars_.erase(s->name);
             line("}");
             break;
         }

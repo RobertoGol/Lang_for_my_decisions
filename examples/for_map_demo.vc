@@ -1,0 +1,26 @@
+//---- [LOGIC] ----/
+// Перебор словаря: запись с полями .key и .value
+
+fn sum_prices(m: map<string, u32>) -> u32 {
+    let u32 total = 0;
+    for pair in m {
+        total = total + pair.value;
+    }
+    return total;
+}
+
+app_entry {
+    let map<string, u32> prices = ["тыква": 50, "огурец": 90, "лук": 20];
+
+    for pair in prices {
+        print(pair.key, " = ", pair.value);
+    }
+
+    print("сумма через fn с map-параметром:", sum_prices(prices));
+
+    // запись в значение через пару — модифицирует словарь
+    for pair in prices {
+        if (pair.value < 30) { pair.value = 25; }
+    }
+    print("лук после скидки:", prices["лук"]);
+}

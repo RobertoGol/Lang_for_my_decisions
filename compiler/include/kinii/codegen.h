@@ -73,6 +73,9 @@ private:
     // Переменные с известным типом map<K, V>: имя -> «K\x1FV» (C++-типы).
     // Нужны бэкенду для честных методов словаря (keys()/values() и т.д.).
     std::map<std::string, std::string> map_vars_;
+
+    // Переменные перебора «for pair in map»: запись даёт .key / .value.
+    std::set<std::string> entry_vars_;
 };
 
 // Готовит имя exe по умолчанию (стебель входного файла) — helper для CLI.

@@ -482,10 +482,20 @@ private:
             case Stmt::ForIn: {
                 if (!st->kids.empty()) walk_expr(st->kids[0].get());
                 push_scope();
+                // По словарю перебор идёт по записям: у записи ровно два
+                // поля — .key и .value. Запоминаем K/V, чтобы это честно
+                // проверить (и не путать с перебором списка).
+                std::string kv;
+                if (!st->kids.empty() && st->kids[0]->kind == Expr::Ident) {
+                    const Symbol* base = cur()->find(st->kids[0]->text);
+                    if (!base) base = find_global(st->kids[0]->text);
+                    if (base) kv = base->kv_types;
+                }
                 Symbol v;
                 v.kind = Symbol::Var;
                 v.name = st->name;
-                v.type_text = "<элемент списка>";
+                v.type_text = kv.empty() ? "<элемент списка>" : "<запись словаря>";
+                v.kv_types = kv;
                 v.file = fid_;
                 v.span = st->span;
                 declare(v);
@@ -642,6 +652,24 @@ private:
                 const Expr* obj = e->kids[0].get();
                 if (obj->kind == Expr::Ident) {
                     const Symbol* tsym = cur()->find(obj->text);
+                    // Запись перебора словаря: честно только .key / .value.
+                    if (tsym && tsym->type_text == "<запись словаря>") {
+                        if (e->field != "key" && e->field != "value") {
+                            std::string best = lev(e->field, "key") <=
+                                                       lev(e->field, "value")
+                                                   ? "key"
+                                                   : "value";
+                            auto b = dg_.error("K2007",
+                                               "у записи словаря нет поля '" + e->field + "'",
+                                               e->span);
+                            b.hint("запись из «for pair in словарь» даёт ровно "
+                                   "два поля: .key (ключ) и .value (значение)");
+                            if (best != e->field) b.suggest(best);
+                            b.emit();
+                        }
+                        walk_expr(obj);
+                        break;
+                    }
                     // Имя структуры: либо сам тип (Point.x), либо переменная этого типа (p.x)
                     std::string sname;
                     if (tsym) {
