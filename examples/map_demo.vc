@@ -1,5 +1,5 @@
 //---- [LOGIC] ----/
-// Демо словарей map<K, V> — литерал ["ключ": значение, ...]
+// Демо словарей map<K, V> — литерал ["ключ": значение], методы, присваивание.
 
 app_entry {
     // с явным типом: map<строка, число>
@@ -8,7 +8,25 @@ app_entry {
     // словарь строк
     let map<string, string> caps = ["греция": "Афины", "египет": "Каир"];
 
-    // доступ по ключу
+    // доступ по ключу и запись
     print("тыква = ", prices["тыква"]);
-    print("столица = ", caps["египет"]);
+    prices["тыква"] = 55;
+    print("новая цена = ", prices["тыква"]);
+
+    // методы словаря
+    print("пар в словаре: ", prices.size);
+    print("есть огурец? ", prices.contains("огурец"));
+    print("есть арбуз? ", prices.contains("арбуз"));
+
+    let list<string> names = prices.keys();
+    for n in names { print("ключ: ", n); }
+
+    let list<u32> values = prices.values();
+    for v in values { print("значение: ", v); }
+
+    prices.remove("огурец");
+    print("после remove: ", prices.size, " пара(ы)");
+
+    let him = caps["греция"];
+    print("столица греции = ", him);
 }

@@ -6,3 +6,6 @@ kinic_build/
 
 # Повреждённый дамп при отладке
 compiler.core
+
+# Сборка примеров (kinic build -o examples\*.exe)
+examples/*.exe

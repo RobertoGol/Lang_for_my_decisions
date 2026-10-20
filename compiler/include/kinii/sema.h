@@ -29,6 +29,10 @@ struct Symbol {
     FileId file = kNoFile;
     Span span;
 
+    // Для map<K, V>: C++-типы «K\x1FV» (нужно и семантике, и кодогену,
+    // чтобы проверять пары литерала и m[k] = v, и строить keys()/values()).
+    std::string kv_types;
+
     // Для Fn
     int param_count = -1;
 };

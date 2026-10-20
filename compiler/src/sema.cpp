@@ -230,7 +230,10 @@ private:
     }
 
     // Грубая проверка типов при присваивании.
-    void check_assign_type(const std::string& dst, const std::string& src, const Span& sp) {
+    // role — необязательное уточнение («ключ», «значение») для сообщений
+    // про словарь: помогает показать, какая именно часть пары не совпала.
+    void check_assign_type(const std::string& dst, const std::string& src, const Span& sp,
+                           const std::string& role = "") {
         if (dst.empty() || src.empty()) return;
         if (dst == src) return;
 
@@ -241,9 +244,16 @@ private:
         if (dst.rfind("<выведен>", 0) == 0 || src.rfind("<выведен>", 0) == 0) return;
 
         auto b = dg_.error("K2003",
-                           "несоответствие типов: нельзя записать '" + src + "' в '" + dst + "'",
+                           role.empty()
+                               ? "несоответствие типов: нельзя записать '" + src +
+                                     "' в '" + dst + "'"
+                               : "несоответствие типов в словаре: " + role +
+                                     " (" + dst + "), а записывается '" + src + "'",
                            sp);
-        b.hint("'" + dst + "' хранит совсем другое, чем даёт '" + src + "'");
+        if (role.empty())
+            b.hint("'" + dst + "' хранит совсем другое, чем даёт '" + src + "'");
+        else
+            b.hint("ожидался тип '" + dst + "'");
         if (dst == "u32" && src == "string")
             b.hint("строку нельзя записать в целое число — типы должны совпадать");
         b.emit();
@@ -287,6 +297,9 @@ private:
                 s.name = st->name;
                 s.type_text = type_text_of(st->type.get());
                 s.type_size = type_size_of(st->type.get());
+                if (st->type && st->type->kind == TypeExpr::Map)
+                    s.kv_types = type_text_of(st->type->elem.get()) + '\x1F' +
+                                 type_text_of(st->type->val.get());
                 s.is_const = (st->kind == Stmt::Const);
                 s.file = fid_;
                 s.span = st->name_span.file != kNoFile ? st->name_span : st->span;
@@ -294,7 +307,19 @@ private:
 
                 if (st->init) {
                     walk_expr(st->init.get());
-                    if (st->type) {
+                    if (st->type && st->type->kind == TypeExpr::Map) {
+                        // Словарю с типом проверяем каждую пару честно:
+                        // ключ -> K, значение -> V (K2003 с ролью для пояснения).
+                        const std::string kt = type_text_of(st->type->elem.get());
+                        const std::string vt = type_text_of(st->type->val.get());
+                        const Expr* lit = st->init.get();
+                        for (size_t i = 0; i + 1 < lit->kids.size(); i += 2) {
+                            check_assign_type(kt, expr_type(lit->kids[i].get()),
+                                              lit->kids[i]->span, "ключ");
+                            check_assign_type(vt, expr_type(lit->kids[i + 1].get()),
+                                              lit->kids[i + 1]->span, "значение");
+                        }
+                    } else if (st->type) {
                         std::string src = expr_type(st->init.get());
                         std::string dst = type_text_of(st->type.get());
                         if (!src.empty() && !dst.empty())
@@ -331,6 +356,9 @@ private:
                     ps.kind = Symbol::Param;
                     ps.name = p.name;
                     ps.type_text = type_text_of(p.type.get());
+                    if (p.type && p.type->kind == TypeExpr::Map)
+                        ps.kv_types = type_text_of(p.type->elem.get()) + '\x1F' +
+                                      type_text_of(p.type->val.get());
                     ps.file = fid_;
                     ps.span = p.span;
                     declare(ps);
@@ -537,6 +565,22 @@ private:
                 const Expr* dst = e->kids[0].get();
                 if (dst->kind == Expr::Ident) {
                     if (!is_known_root(dst->text)) reference(dst->text, dst->span);
+                } else if (dst->kind == Expr::Index && dst->kids[0]->kind == Expr::Ident) {
+                    // m[ключ] = значение: ключ должен подходить под K,
+                    // записываемое — под V. Информацию о K/V несёт символ.
+                    const Symbol* base = cur()->find(dst->kids[0]->text);
+                    if (!base) base = find_global(dst->kids[0]->text);
+                    if (base && !base->kv_types.empty()) {
+                        size_t sep = base->kv_types.find('\x1F');
+                        std::string kt = base->kv_types.substr(0, sep);
+                        std::string vt = base->kv_types.substr(sep + 1);
+                        check_assign_type(kt, expr_type(dst->kids[1].get()),
+                                          dst->kids[1]->span, "ключ");
+                        check_assign_type(vt, expr_type(e->kids[1].get()),
+                                          e->kids[1]->span, "значение");
+                    }
+                    reference(dst->kids[0]->text, dst->kids[0]->span);
+                    walk_expr(dst->kids[1].get());
                 } else {
                     walk_expr(dst); // Member: проверка поля; Index: проверка базы
                 }

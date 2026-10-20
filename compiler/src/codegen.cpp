@@ -244,6 +244,79 @@ std::string CodeGen::gen_expr(const Expr* e) {
                 }
             }
             if (callee->kind == Expr::Member) {
+                // Методы словаря: m.contains(k), m.remove(k), m.keys(),
+                // m.values(), m.size() — типы K/V известны из объявления.
+                const Expr* mbase = callee->kids[0].get();
+                if (mbase && mbase->kind == Expr::Ident) {
+                    auto mv = map_vars_.find(mbase->text);
+                    if (mv != map_vars_.end()) {
+                        const std::string& var = mv->first;
+                        size_t sep = mv->second.find('\x1F');
+                        std::string kt = mv->second.substr(0, sep);
+                        std::string vt = mv->second.substr(sep + 1);
+                        const std::string& meth = callee->field;
+                        auto wrong_args = [&](const std::string& want) {
+                            saw_error_ = true;
+                            dg_.error("K2006",
+                                      "метод '" + var + "." + meth + "' принимает " +
+                                          want,
+                                      callee->span)
+                                .hint("у map<K, V> есть: contains(k), remove(k), "
+                                      "keys(), values(), size()")
+                                .emit();
+                        };
+                        std::string arg =
+                            e->kids.size() > 1 ? gen_expr(e->kids[1].get()) : "";
+                        if (meth == "contains" || meth == "remove") {
+                            if (e->kids.size() != 2) {
+                                wrong_args(meth == "contains"
+                                               ? "1 аргумент (ключ)"
+                                               : "1 аргумент (ключ)");
+                                return "0";
+                            }
+                            if (meth == "contains")
+                                return "(" + var + ".count(" + arg + ") > 0)";
+                            return var + ".erase(" + arg + ")";
+                        }
+                        if (meth == "size") {
+                            if (e->kids.size() != 1) {
+                                wrong_args("0 аргументов");
+                                return "0";
+                            }
+                            return var + ".size()";
+                        }
+                        if (meth == "keys") {
+                            if (e->kids.size() != 1) {
+                                wrong_args("0 аргументов");
+                                return "0";
+                            }
+                            // list<K>: все ключи словаря в порядке хранения
+                            return "[&]{ std::vector<" + kt + "> r; "
+                                   "for (const auto& kv : " + var +
+                                   ") r.push_back(kv.first); return r; }()";
+                        }
+                        if (meth == "values") {
+                            if (e->kids.size() != 1) {
+                                wrong_args("0 аргументов");
+                                return "0";
+                            }
+                            // list<V>: все значения словаря
+                            return "[&]{ std::vector<" + vt + "> r; "
+                                   "for (const auto& kv : " + var +
+                                   ") r.push_back(kv.second); return r; }()";
+                        }
+                        // неизвестный метод словаря — честная ошибка
+                        saw_error_ = true;
+                        dg_.error("K3001",
+                                  "у словаря нет метода '" + meth + "'",
+                                  callee->span)
+                            .hint("у map<K, V> есть: contains(k), remove(k), "
+                                  "keys(), values(), size(); размер ещё даёт len(m)")
+                            .emit();
+                        return "0";
+                    }
+                }
+
                 // Системные вызовы с точкой: console.print(...), sys.exit(...) и т.п.
                 std::string path = dotted_path(callee);
                 std::vector<std::string> args;
@@ -284,6 +357,21 @@ std::string CodeGen::gen_expr(const Expr* e) {
             if (e->kids[0] && e->kids[0]->kind == Expr::Ident &&
                 enums_.count(e->kids[0]->text))
                 return e->kids[0]->text + "::" + e->field;
+            // свойство слваря: m.size — число пар (без скобок, как у человека)
+            if (e->kids[0] && e->kids[0]->kind == Expr::Ident) {
+                auto mv = map_vars_.find(e->kids[0]->text);
+                if (mv != map_vars_.end()) {
+                    if (e->field == "size") return mv->first + ".size()";
+                    saw_error_ = true;
+                    dg_.error("K3001",
+                              "у словаря нет свойства '" + e->field + "'",
+                              e->span)
+                        .hint("единственный доступный размер: " + mv->first +
+                              ".size (или len(" + mv->first + "))")
+                        .emit();
+                    return "0";
+                }
+            }
             return gen_expr(e->kids[0].get()) + "." + e->field;
         }
         case Expr::Index:
@@ -479,6 +567,9 @@ void CodeGen::gen_stmt(Stmt* s) {
             const std::string kw = s->kind == Stmt::Const ? "const " : "";
             std::string t = type_str(s->type.get());
             if (s->type) {
+                if (s->type->kind == TypeExpr::Map)
+                    map_vars_[s->name] = type_str(s->type->elem.get()) + '\x1F' +
+                                         type_str(s->type->val.get());
                 line(kw + t + " " + s->name + " = " +
                      (s->init ? gen_expr(s->init.get()) : "{}") + ";");
             } else if (s->init && s->init->kind == Expr::ListLit) {
@@ -611,6 +702,9 @@ void CodeGen::emit_fn(Stmt* s) {
     for (const auto& p : s->params) {
         std::string pt = p.type ? type_str(p.type.get()) : "auto";
         params.push_back(pt + " " + p.name);
+        if (p.type && p.type->kind == TypeExpr::Map)
+            map_vars_[p.name] = type_str(p.type->elem.get()) + '\x1F' +
+                                type_str(p.type->val.get());
     }
     std::string ret = s->ret ? type_str(s->ret.get()) : "void";
     line("");

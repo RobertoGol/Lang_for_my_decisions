@@ -69,6 +69,10 @@ private:
 
     std::set<std::string> nodes_;         // имена node/isolate (не типы!)
     std::vector<std::string> iso_jobs_;   // kn_iso_body_N — потоки стартуют из main
+
+    // Переменные с известным типом map<K, V>: имя -> «K\x1FV» (C++-типы).
+    // Нужны бэкенду для честных методов словаря (keys()/values() и т.д.).
+    std::map<std::string, std::string> map_vars_;
 };
 
 // Готовит имя exe по умолчанию (стебель входного файла) — helper для CLI.
