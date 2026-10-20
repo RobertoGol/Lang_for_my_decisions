@@ -299,8 +299,39 @@ void print(const A&... a) {
     ((kn_one(a), 0), ...);
     kn_write("\n", 1);
 }
-} // namespace kn
 )RT";
+        // freestanding: все замены — только kernel32, без libc/кучи.
+        if (need_exit_) {
+            os_ << R"RT([[noreturn]] inline void sys_exit(uint64_t code) {
+    ExitProcess((uint32_t)code);
+}
+)RT";
+        }
+        if (need_time_) {
+            os_ << R"RT(inline uint64_t time_now_ms() {
+    // FILETIME — 100-нс тики с 1601-01-01 UTC; сдвиг эпохи вычтен честно.
+    uint64_t ft = 0;
+    GetSystemTimeAsFileTime(&ft);
+    return (ft - 116444736000000000ULL) / 10000;
+}
+)RT";
+        }
+        if (need_rnd_) {
+            os_ << R"RT(inline uint64_t rnd_next(uint64_t limit) {
+    // xorshift64 (Г. Марсалья): без libc и без <random>. Нулевое состояние
+    // честно исключено (нули зациклены): сид — GetTickCount64, подмешанный
+    // константой золотого сечения, плюс |1.
+    static uint64_t st = 0;
+    if (st == 0)
+        st = ((GetTickCount64() ^ 0x9E3779B97F4A7C15ULL) | 0xB5297A4DC58B56F7ULL);
+    st ^= st >> 12; st ^= st << 25; st ^= st >> 27;
+    // честный равномерный отдача: старшие биты 128-битного произведения,
+    // смещения модуля нет.
+    return (uint64_t)(((unsigned __int128)st * limit) >> 64);
+}
+)RT";
+        }
+        os_ << "} // namespace kn\n";
         return;
     }
     os_ << "#include <cstdint>\n";
@@ -310,8 +341,9 @@ void print(const A&... a) {
     if (need_map_) os_ << "#include <unordered_map>\n";
     if (need_thread_) os_ << "#include <thread>\n";
     if (need_exit_) os_ << "#include <cstdlib>\n";
-    if (need_time_) os_ << "#include <chrono>\n";
-    if (need_rnd_) os_ << "#include <random>\n";
+    // freestanding: <chrono>/<random> тянут libc и кучу — честные замены на kernel32.
+    if (need_time_ && !freestanding_) os_ << "#include <chrono>\n";
+    if (need_rnd_ && !freestanding_) os_ << "#include <random>\n";
 
     std::string rt = "namespace kn {\n";
     if (need_print_) {
@@ -359,27 +391,63 @@ auto len(const C& c) -> decltype(c.size()) {
 )RT";
     }
     if (need_exit_) {
-        rt += R"RT([[noreturn]] inline void sys_exit(uint64_t code) {
+        if (freestanding_) {
+            rt += R"RT([[noreturn]] inline void sys_exit(uint64_t code) {
+    // freestanding: без libc честный выход — ExitProcess (kernel32).
+    ExitProcess((uint32_t)code);
+}
+)RT";
+        } else {
+            rt += R"RT([[noreturn]] inline void sys_exit(uint64_t code) {
     std::exit((int)code);
 }
 )RT";
+        }
     }
     if (need_time_) {
-        rt += R"RT(inline uint64_t time_now_ms() {
+        if (freestanding_) {
+            rt += R"RT(inline uint64_t time_now_ms() {
+    // freestanding: FILETIME — 100-нансекундные тики с 1601-01-01 UTC.
+    // Сдвиг эпохи честно вычтен: получаем миллисекунды с 1970-01-01.
+    uint64_t ft = 0;
+    GetSystemTimeAsFileTime(&ft);
+    return (ft - 116444736000000000ULL) / 10000;
+}
+)RT";
+        } else {
+            rt += R"RT(inline uint64_t time_now_ms() {
     using namespace std::chrono;
     return (uint64_t)duration_cast<milliseconds>(
         system_clock::now().time_since_epoch()).count();
 }
 )RT";
+        }
     }
     if (need_rnd_) {
-        rt += R"RT(inline uint64_t rnd_next(uint64_t limit) {
+        if (freestanding_) {
+            rt += R"RT(inline uint64_t rnd_next(uint64_t limit) {
+    // freestanding: xorshift64 (Г. Марсалья) — без libc и без <random>.
+    // Нулевое состояние честно исключено (xorshift на нуле зациклен):
+    // сид — GetTickCount64, смешанный константами золотого сечения.
+    static uint64_t st = 0;
+    if (st == 0)
+        st = ((GetTickCount64() ^ 0x9E3779B97F4A7C15ULL)
+              | 0xB5297A4DC58B56F7ULL);
+    st ^= st >> 12; st ^= st << 25; st ^= st >> 27;
+    // честный равномерный отдача: старшие биты 128-битного произведения
+    // (умножение со взятием верхней половины — смещения нет).
+    return (uint64_t)(((unsigned __int128)st * limit) >> 64);
+}
+)RT";
+        } else {
+            rt += R"RT(inline uint64_t rnd_next(uint64_t limit) {
     if (limit == 0) return 0;
     static std::mt19937_64 rng{ std::random_device{}() };
     std::uniform_int_distribution<uint64_t> d(0, limit - 1);
     return d(rng);
 }
 )RT";
+        }
     }
     rt += "} // namespace kn\n";
     if (rt != "namespace kn {\n} // namespace kn\n") os_ << rt << "\n";

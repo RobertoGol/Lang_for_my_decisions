@@ -90,6 +90,11 @@ const DiagnosticEngine::FileEnt* DiagnosticEngine::file_entry(FileId id) const {
 
 void DiagnosticEngine::push(Diagnostic d) {
     if (quiet_) return; // тихий сбор таблиц символов (первый проход драйвера)
+    // Дедуп: одна и та же позиция с той же сутью сообщается ровно один раз.
+    std::ostringstream key;
+    key << (char)d.sev << '|' << d.code << '|' << d.primary.file << '|'
+        << d.primary.begin.line << ':' << d.primary.begin.col << '|' << d.message;
+    if (!seen_keys_.insert(key.str()).second) return;
     if (d.sev == Sev::Error) {
         n_errors_++;
         had_errors_ = true;

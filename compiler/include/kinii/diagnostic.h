@@ -7,6 +7,7 @@
 #include <optional>
 #include <ostream>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace kinii {
@@ -85,6 +86,8 @@ private:
 
     std::vector<FileEnt> files_;
     std::vector<Diagnostic> rendered_;
+    // Дедуп: (код, файл, позиция, текст) — диагностика не плодит простыни дублей.
+    std::unordered_set<std::string> seen_keys_;
     size_t n_errors_ = 0;
     size_t n_warnings_ = 0;
     bool had_errors_ = false;

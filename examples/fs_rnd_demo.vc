@@ -1,0 +1,31 @@
+//---- [LOGIC] ----/
+// fs_rnd_demo — честный freestanding-тест sys.rnd.next / sys.time.now / sys.exit:
+// xorshift64 на GetTickCount64, FILETIME-время, ExitProcess. Только kernel32.
+
+fn main_r(x: u32) -> u32 {
+    return x + 1000;
+}
+
+app_entry {
+    let u32 a = sys.rnd.next(10);
+    let u32 b = sys.rnd.next(1000);
+    let u32 t = main_r(0);
+    // честные рамки: любой отдача rnd в своих пределах
+    if (a < 10) {
+        print(1111);
+    }  else {
+        print(9999);
+    }
+    if (b < 1000) {
+        print(2222);
+    } else {
+        print(9998);
+    }
+    let u64 now = sys.time.now();
+    if (now > 0) {
+        print(t);
+    } else {
+        print(9997);
+    }
+    sys.exit(44);
+}
