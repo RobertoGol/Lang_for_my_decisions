@@ -38,6 +38,9 @@ public:
     void scan_features(const Stmt* root);
     void begin();
 
+    // --freestanding: прелюдия на WinAPI, честный срез языка (без кучи).
+    void set_freestanding(bool fs) { freestanding_ = fs; }
+
     // Шаг 1: структуры/перечисления файла; шаг 2: константы; шаг 3: функции.
     void declare_types(Stmt* root);
     void define_globals(Stmt* root);
@@ -86,6 +89,10 @@ private:
     bool need_thread_ = false;
     bool need_string_ = false, need_vector_ = false, need_array_ = false,
          need_map_ = false;
+
+    // Freestanding-режим (--freestanding): только kernel32, без CRT и
+    // libstdc++. Куча пока своя не заведена — честный срез языка.
+    bool freestanding_ = false;
 };
 
 // Готовит имя exe по умолчанию (стебель входного файла) — helper для CLI.

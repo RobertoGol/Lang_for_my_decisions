@@ -107,18 +107,39 @@ void CodeGen::line(const std::string& text) {
 void CodeGen::scan_features(const Stmt* root) {
     if (!root) return;
 
+    // Freestanding: всё, что требует кучу или потоки, — честная K3001.
+    auto forbid_fs = [&](const std::string& what, const Span& sp) {
+        saw_error_ = true;
+        dg_.error("K3001",
+                  "в freestanding-режиме (без CRT и libstdc++) недоступно: "
+                      + what,
+                  sp)
+            .hint("там пока нет своей кучи — используйте числа, структуры "
+                  "и массивы фикс. длины; обычный билд без --freestanding "
+                  "поддерживает всё")
+            .emit();
+    };
+
     std::function<void(const TypeExpr*)> walk_type = [&](const TypeExpr* t) {
         if (!t) return;
         switch (t->kind) {
             case TypeExpr::Named:
-                if (t->name == "string") need_string_ = true;
+                if (t->name == "string") {
+                    need_string_ = true;
+                    if (freestanding_)
+                        forbid_fs("строки (string)", t->span);
+                }
                 break;
             case TypeExpr::List:
                 need_vector_ = true;
+                if (freestanding_)
+                    forbid_fs("динамические списки (list<T>)", t->span);
                 walk_type(t->elem.get());
                 break;
             case TypeExpr::Map:
                 need_map_ = true;
+                if (freestanding_)
+                    forbid_fs("словари (map<K, V>) — нужна своя куча", t->span);
                 walk_type(t->elem.get());
                 walk_type(t->val.get());
                 break;
@@ -126,10 +147,11 @@ void CodeGen::scan_features(const Stmt* root) {
                 need_array_ = true;
                 walk_type(t->elem.get());
                 break;
-            default: break; // Cell и Named-структуры: смотрим внутрь
+            case TypeExpr::Cell:
+                walk_type(t->elem.get());
+                break;
+            default: break;
         }
-        if (t->kind == TypeExpr::Cell || t->kind == TypeExpr::Named)
-            walk_type(t->elem.get());
     };
 
     std::function<void(const Expr*)> walk_expr = [&](const Expr* e) {
@@ -151,9 +173,12 @@ void CodeGen::scan_features(const Stmt* root) {
             else if (callee_path == "len")
                 need_len_ = true;
             else if (callee_path == "console.read_input" ||
-                     callee_path == "console.read_line")
+                     callee_path == "console.read_line") {
                 need_read_ = true;
-            else if (callee_path == "sys.exit")
+                if (freestanding_)
+                    forbid_fs("чтение ввода (console.read_*) — без libc; "
+                              "сделаем после своей кучи", e->span);
+            } else if (callee_path == "sys.exit")
                 need_exit_ = true;
             else if (callee_path == "sys.time.now")
                 need_time_ = true;
@@ -175,8 +200,12 @@ void CodeGen::scan_features(const Stmt* root) {
         for (const auto& b : s->else_body) walk_stmt(b.get());
         for (const auto& c : s->cases) walk_expr(c.value.get());
         if (s->block) walk_stmt(s->block.get());
-        if (s->kind == Stmt::NodeDecl || s->kind == Stmt::IsolateDecl)
+        if (s->kind == Stmt::NodeDecl || s->kind == Stmt::IsolateDecl) {
             need_thread_ = true;
+            if (freestanding_)
+                forbid_fs("node/isolate (потоки) — без libc; сделаем после "
+                          "своей кучи", s->span);
+        }
     };
     walk_stmt(root);
 }
@@ -186,6 +215,71 @@ void CodeGen::begin() {
     os_ << "// Правки вручную потеряются: следующий запуск перезапишет файл.\n";
     os_ << "// Прелюдия подключает только то, что реально использовано: мёртвый код\n";
     os_ << "// и неиспользованные хедеры в бинарник не попадают.\n";
+    if (freestanding_) {
+        os_ << R"RT(#include <cstdint>
+
+// freestanding: только kernel32. Без CRT, без libstdc++ — точка входа и
+// системные вызовы собственные. Зависимость: kernel32.dll (есть всегда).
+extern "C" {
+void ExitProcess(uint32_t code);
+void* GetStdHandle(int32_t which);
+int WriteFile(void* handle, const void* data, uint32_t bytes,
+              uint32_t* written, void* overlapped);
+void GetSystemTimeAsFileTime(uint64_t* out);
+uint64_t GetTickCount64(void);
+}
+extern "C" int main(void);
+
+extern "C" void _start() {
+    ExitProcess((uint32_t)main());
+}
+
+namespace kn {
+inline void* std_out() { return GetStdHandle(-11 /*STD_OUTPUT_HANDLE*/); }
+
+inline void kn_write(const char* s, uint32_t n) {
+    uint32_t w = 0;
+    WriteFile(std_out(), s, n, &w, nullptr);
+}
+inline void kn_lit(const char* s) {
+    uint32_t n = 0;
+    while (s[n]) ++n;
+    kn_write(s, n);
+}
+template <class T>
+inline void kn_num(T v) {
+    char tmp[24];
+    int i = 0;
+    if constexpr (std::is_signed<decltype(v)>::value && v < 0) {
+        tmp[i++] = '-';
+        uint64_t u = (uint64_t)(-(v + 1)) + 1;   // безопасно для самого младшего
+        do { tmp[i++] = char('0' + u % 10); u /= 10; } while (u);
+    } else {
+        uint64_t u = (uint64_t)v;
+        do { tmp[i++] = char('0' + u % 10); u /= 10; } while (u);
+    }
+    while (i) kn_write(&tmp[--i], 1);
+}
+template <class T>
+inline void kn_arg(const T& v) {
+    if constexpr (std::is_same_v<std::decay_t<T>, const char*>)
+        kn_lit((const char*)v);
+    else if constexpr (std::is_same_v<std::decay_t<T>, bool>)
+        kn_num<bool>(v);  // как и раньше: 1 / 0
+    else if constexpr (std::is_integral_v<T> && sizeof(T) == 1)
+        kn_num<int>((int)v);  // u8 печатается числом
+    else
+        kn_num(v);
+}
+template <class... A>
+void print(const A&... a) {
+    (kn_arg(a), ...);
+    kn_write("\n", 1);
+}
+} // namespace kn
+)RT";
+        return;
+    }
     os_ << "#include <cstdint>\n";
     if (need_string_) os_ << "#include <string>\n";
     if (need_vector_) os_ << "#include <vector>\n";
