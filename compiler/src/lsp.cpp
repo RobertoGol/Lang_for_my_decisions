@@ -386,6 +386,9 @@ std::string type_to_text(const TypeExpr* t) {
             return (t->name.empty() ? "cell" : "cell:" + t->name);
         case TypeExpr::List:
             return "list<" + type_to_text(t->elem.get()) + ">";
+        case TypeExpr::Map:
+            return "map<" + type_to_text(t->elem.get()) + ", " +
+                   type_to_text(t->val.get()) + ">";
         case TypeExpr::Array:
             return type_to_text(t->elem.get()) + "[" + std::to_string(t->array_len) + "]";
     }

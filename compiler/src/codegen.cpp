@@ -497,7 +497,7 @@ void CodeGen::gen_stmt(Stmt* s) {
             } else if (s->init && s->init->kind == Expr::MapLit &&
                        s->init->kids.size() >= 2) {
                 // словарь без типа: выводим K и V из первой пары
-                auto kind_cxx = [](const Expr* x) -> std::string {
+                auto kind_cxx = [this](const Expr* x) -> std::string {
                     if (!x) return "int64_t";
                     if (x->kind == Expr::Str) return "std::string";
                     if (x->kind == Expr::Bool) return "bool";
