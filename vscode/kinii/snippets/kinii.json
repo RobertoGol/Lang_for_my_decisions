@@ -94,6 +94,11 @@
         "body": "[${1:item} for ${1:item} in ${2:sписок} if ${3:условие}]",
         "description": "Построение списка с фильтром"
     },
+    "map": {
+        "prefix": "map",
+        "body": "let map<${1|string,u32,u64,u8|}, ${2|u32,u64,string,bool|}> ${3:цены} = [\"${4:ключ}\": ${5:0}];",
+        "description": "Словарь map<K, V> (тип обязателен)"
+    },
     "import": {
         "prefix": "imp",
         "body": "import \"${1:модуль.ctos}\";",

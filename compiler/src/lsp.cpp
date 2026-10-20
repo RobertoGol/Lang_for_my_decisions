@@ -181,6 +181,7 @@ std::string json_escape(const std::string& s) {
 struct BuiltinDoc {
     std::string match;
     std::string text;
+    bool dot_only = false; // находить только как «после точки» (copy.keys), не по одному имени
 };
 
 const std::vector<BuiltinDoc>& builtin_docs() {
@@ -201,8 +202,15 @@ const std::vector<BuiltinDoc>& builtin_docs() {
         {"string", "string — строка (в бэкенде std::string)"},
         {"bool",   "bool — да/нет"},
         {"list",   "list<T> — динамический список"},
+        {"map",    "map<K, V> — словарь; тип обязателен: let map<string, u32> цены = [\"хлеб\": 50];"},
         {"node",   "node — узел: функции видны всему проекту; инструкции тела работают своим потоком"},
         {"isolate","isolate — изолят: отдельный поток; app_entry всегда дожидается его (join)"},
+        // члены словаря: только как «m.keys» — свои fn keys() не перекрываем
+        {"keys",     "m.keys() — list<K>: все ключи словаря", true},
+        {"values",   "m.values() — list<V>: все значения словаря", true},
+        {"contains", "m.contains(ключ) — есть ли ключ в словаре (bool)", true},
+        {"remove",   "m.remove(ключ) — убрать пару по ключу", true},
+        {"size",     "m.size — число пар (тоже даёт len(m))", true},
     };
     return docs;
 }
@@ -215,7 +223,8 @@ std::string builtin_hover(const std::string& name) {
     if (dot != std::string::npos) {
         std::string seg = name.substr(dot + 1);
         for (const auto& d : builtin_docs())
-            if (seg == d.match) return d.text;
+            if (seg == d.match && (d.dot_only || name.find('.') != std::string::npos))
+                return d.text;
     }
     return "";
 }

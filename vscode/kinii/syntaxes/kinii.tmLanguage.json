@@ -106,7 +106,7 @@
         "types": {
             "patterns": [
                 {
-                    "match": "\\b(list)\\s*<",
+                    "match": "\\b(list|map)\\s*<",
                     "captures": {
                         "1": { "name": "support.type.kinii" },
                         "2": { "name": "punctuation.definition.typeparameters.kinii" }

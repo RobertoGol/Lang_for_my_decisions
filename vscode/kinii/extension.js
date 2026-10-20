@@ -518,6 +518,16 @@ const BUILTIN_MEMBERS = {
     ],
 };
 
+// Члены словаря map<K, V>. Тип всегда пишется явно (K1014), поэтому тип
+// переменной надёжно восстанавливается из буфера.
+const MAP_MEMBERS = [
+    { name: 'size', type: '.size / m.size() — число пар (len(m) тоже даёт)' },
+    { name: 'contains', type: '(ключ) — есть ли ключ в словаре (bool)' },
+    { name: 'remove', type: '(ключ) — убрать пару по ключу' },
+    { name: 'keys', type: '() → list<K> — все ключи словаря' },
+    { name: 'values', type: '() → list<V> — все значения словаря' },
+];
+
 // Тип переменной из буфера: «let Точка точка = …» или «let точка = Точка {».
 // Терпим к недопечатанной строке (без точки с запятой на конце).
 function varTypeInBuffer(doc, varName) {
@@ -533,7 +543,13 @@ function varTypeInBuffer(doc, varName) {
         let part = m[1];
         const cellraw = /^\s*cell\s*:\s*raw\b/.exec(part);
         if (cellraw) part = part.slice(cellraw[0].length);
-        const colon = part.indexOf(':');
+        // двоеточие срезаем только вне «<>» — в map<string, u32> это разделитель K и V
+        let colon = -1, depth = 0;
+        for (let c = 0; c < part.length; ++c) {
+            if (part[c] === '<' || part[c] === '[') ++depth;
+            else if (part[c] === '>' || part[c] === ']') --depth;
+            else if (part[c] === ':' && depth === 0) { colon = c; break; }
+        }
         if (colon >= 0) part = part.slice(0, colon);
         const nm = /([A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё_0-9]*)\s*$/.exec(part);
         if (!nm || nm[1] !== varName) continue;
@@ -542,6 +558,20 @@ function varTypeInBuffer(doc, varName) {
         const lit = /=\s*([A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё_0-9]*)\s*\{/.exec(raw);
         if (lit) return lit[1];
         return null;
+    }
+    return null;
+}
+
+// Объявленный тип map<K, V> для переменной: «let map<string, u32> цены = …».
+// Возвращает { k, v } или null. Сканируем от конца — как varTypeInBuffer.
+function varMapKVInBuffer(doc, varName) {
+    let lines;
+    try { lines = doc.getText().split('\n'); } catch (e) { return null; }
+    for (let i = lines.length - 1; i >= 0; --i) {
+        const raw = lines[i].replace(/\/\/.*$/, '');
+        const m = /^\s*(?:let|const)\s+map\s*<\s*([^<>,]+?)\s*,\s*([^<>,]+?)\s*>\s+([A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё_0-9]*)\s*(?==|;|$)/.exec(raw);
+        if (!m || m[3] !== varName) continue;
+        return { k: m[1].trim(), v: m[2].trim() };
     }
     return null;
 }
@@ -581,7 +611,7 @@ function structIndexFor(doc) {
     return buf;
 }
 
-// «точка.х» / «sys.time.» → поля структуры или члены встроенных.
+// «точка.х» / «sys.time.» / «цены.» → члены встроенных, словаря или поля структуры.
 function provideFieldHints(doc, owner, typed, rich) {
     let list = null;
     let origin = '';
@@ -592,12 +622,21 @@ function provideFieldHints(doc, owner, typed, rich) {
         list = BUILTIN_MEMBERS[owner].filter(
             (f) => f.name.toLowerCase().startsWith(typed.toLowerCase()));
     } else {
-        const structs = structIndexFor(doc);
-        const stName = varTypeInBuffer(doc, owner);
-        if (stName && structs.has(stName)) {
-            origin = 'структура ' + stName;
-            list = structs.get(stName).filter(
+        const mapKV = varMapKVInBuffer(doc, owner);
+        if (mapKV) {
+            origin = 'map<' + mapKV.k + ', ' + mapKV.v + '>';
+            isFn = true;
+            list = MAP_MEMBERS.filter(
                 (f) => f.name.toLowerCase().startsWith(typed.toLowerCase()));
+        }
+        if (!list || !list.length) {
+            const structs = structIndexFor(doc);
+            const stName = varTypeInBuffer(doc, owner);
+            if (stName && structs.has(stName)) {
+                origin = 'структура ' + stName;
+                list = structs.get(stName).filter(
+                    (f) => f.name.toLowerCase().startsWith(typed.toLowerCase()));
+            }
         }
     }
     if (!list || !list.length) return null;
