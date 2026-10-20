@@ -1,0 +1,27 @@
+//---- [LOGIC] ----/
+// fs_demo — честный тест --freestanding: только числа и структуры, print.
+// Целевая ОС CtOs (32 МБ RAM): без CRT и libstdc++, только kernel32.
+
+struct Slot {
+    at: u32;
+    val: u32;
+}
+
+fn compute(x: u32) -> u32 {
+    return x * 3 + 7;
+}
+
+app_entry {
+    let u32 n = compute(12);
+    print(333);
+    print(n);
+    if (n > 30) {
+        print(444);
+    } else {
+        print(555);
+    }
+    let Slot s = Slot { at: 1, val: n };
+    s.val = s.val + 1;
+    print(s.at);
+    print(s.val);
+}

@@ -1,0 +1,7 @@
+//---- [LOGIC] ----/
+// Негативный тест freestanding: список недоступен (нет своей кучи).
+
+app_entry {
+    let list<string> items = ["a"];
+    print(1);
+}

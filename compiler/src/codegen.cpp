@@ -156,7 +156,22 @@ void CodeGen::scan_features(const Stmt* root) {
 
     std::function<void(const Expr*)> walk_expr = [&](const Expr* e) {
         if (!e) return;
-        if (e->kind == Expr::Str) need_string_ = true;
+        if (e->kind == Expr::Str) {
+            need_string_ = true;
+            // литеральная строка честно тоже в запрет: тип выводится в string
+            // (std::string тянет кучу CRT). Печать чисел ограничена честно.
+            if (freestanding_)
+                forbid_fs("строка (литерал и переменная string) — своя куча "
+                          "в CtOs появится отдельно", e->span);
+        }
+        if (e->kind == Expr::ListLit && freestanding_) {
+            forbid_fs("список-литерал (list<T>) — своя куча в CtOs появится "
+                      "отдельно", e->span);
+        }
+        if (e->kind == Expr::MapLit && freestanding_) {
+            forbid_fs("словарь-литерал (map<K, V>) — своя куча в CtOs появится "
+                      "отдельно", e->span);
+        }
         if (e->kind == Expr::Call && !e->kids.empty() &&
             e->kids[0]) {
             std::string callee_path =
@@ -218,8 +233,10 @@ void CodeGen::begin() {
     if (freestanding_) {
         os_ << R"RT(#include <cstdint>
 
-// freestanding: только kernel32. Без CRT, без libstdc++ — точка входа и
-// системные вызовы собственные. Зависимость: kernel32.dll (есть всегда).
+// freestanding: только kernel32. Без CRT, без libstdc++, без <type_traits> —
+// печать честно на перегрузках, знак числа — runtime-проверкой (для
+// беззнаковых типов ветка мёртвая и выкидывается компилятором).
+// Зависимость: kernel32.dll (есть всегда).
 extern "C" {
 void ExitProcess(uint32_t code);
 void* GetStdHandle(int32_t which);
@@ -229,6 +246,9 @@ void GetSystemTimeAsFileTime(uint64_t* out);
 uint64_t GetTickCount64(void);
 }
 extern "C" int main(void);
+// gcc в MinGW вставляет в main вызов __main (инициализация конструкторов);
+// в freestanding их нет — честная пустышка.
+extern "C" void __main() {}
 
 extern "C" void _start() {
     ExitProcess((uint32_t)main());
@@ -250,7 +270,7 @@ template <class T>
 inline void kn_num(T v) {
     char tmp[24];
     int i = 0;
-    if constexpr (std::is_signed<decltype(v)>::value && v < 0) {
+    if (v < 0) {                       // честно: беззнаковым не зайдёт
         tmp[i++] = '-';
         uint64_t u = (uint64_t)(-(v + 1)) + 1;   // безопасно для самого младшего
         do { tmp[i++] = char('0' + u % 10); u /= 10; } while (u);
@@ -260,20 +280,23 @@ inline void kn_num(T v) {
     }
     while (i) kn_write(&tmp[--i], 1);
 }
-template <class T>
-inline void kn_arg(const T& v) {
-    if constexpr (std::is_same_v<std::decay_t<T>, const char*>)
-        kn_lit((const char*)v);
-    else if constexpr (std::is_same_v<std::decay_t<T>, bool>)
-        kn_num<bool>(v);  // как и раньше: 1 / 0
-    else if constexpr (std::is_integral_v<T> && sizeof(T) == 1)
-        kn_num<int>((int)v);  // u8 печатается числом
-    else
-        kn_num(v);
-}
+// одно значение — один вызов: перегрузки вместо constexpr-if
+inline void kn_one(const char* v) { kn_lit(v); }
+inline void kn_one(bool v) { kn_write(v ? "1" : "0", 1); }
+inline void kn_one(unsigned char v) { kn_num<int>((int)v); }
+inline void kn_one(signed char v) { kn_num<int>((int)v); }
+inline void kn_one(short v) { kn_num(v); }
+inline void kn_one(unsigned short v) { kn_num(v); }
+inline void kn_one(int v) { kn_num(v); }
+inline void kn_one(unsigned int v) { kn_num(v); }
+inline void kn_one(long v) { kn_num(v); }
+inline void kn_one(unsigned long v) { kn_num(v); }
+inline void kn_one(long long v) { kn_num(v); }
+inline void kn_one(unsigned long long v) { kn_num(v); }
+// print печатает аргументы подряд и переводит строку (как всегда).
 template <class... A>
 void print(const A&... a) {
-    (kn_arg(a), ...);
+    ((kn_one(a), 0), ...);
     kn_write("\n", 1);
 }
 } // namespace kn

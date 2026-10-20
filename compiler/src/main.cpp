@@ -316,7 +316,7 @@ int cmd_opt(const std::vector<std::string>& files, bool color) {
     return 0;
 }
 
-// Сборка: kinic build <файлы...> [-o out.exe] [--tiny]
+// Сборка: kinic build <файлы...> [-o out.exe] [--tiny] [--freestanding]
 // Полный конвейер: проверки -> оптимизация -> генерация C++ -> g++ -> exe.
 //
 // Профиль tiny (для охоты за байтом и будущей freestanding-ОС):
@@ -325,8 +325,13 @@ int cmd_opt(const std::vector<std::string>& files, bool color) {
 //                              не включаются (generated код их не использует)
 //   -fno-threadsafe-statics   — статический mt_раблокировки локальных static
 //   --gc-sections             — линкер выкидывает неиспользуемые функции/данные
+//
+// Режим --freestanding (целевая ОС CtOs, 32 МБ RAM, без libc/std):
+//   прелюдия только kernel32, честная точка входа _start, урезанный язык
+//   (K3001 на string/list/map/read/node). Линкуем: -nostdlib -lkernel32,
+//   вход — наша _start.
 int cmd_build(const std::vector<std::string>& files, const std::string& out,
-              bool color, bool tiny) {
+              bool color, bool tiny, bool freestanding = false) {
     if (files.empty()) return 0;
     if (!out.empty() && files.size() > 1) {
         std::cerr << "kinic build: -o задаётся для одного входного файла\n";
@@ -350,6 +355,22 @@ int cmd_build(const std::vector<std::string>& files, const std::string& out,
         diags.render_all(std::cout, color);
         std::cout << "итог: сначала исправьте ошибки — собрать нельзя\n";
         return 1;
+    }
+
+    // Freestanding: K3001-шлагбаум ДО оптимизации — мёртвый код ещё не вырезан,
+    // поэтому запрещённое честно ловится даже из невыполняемых веток.
+    if (freestanding) {
+        std::ostringstream sink;
+        kinii::CodeGen cg_fs(diags, sink);
+        cg_fs.set_freestanding(true);
+        for (kinii::FileId fid : driver.order())
+            cg_fs.scan_features(driver.ast_of(fid));
+        if (diags.had_errors()) {
+            diags.render_all(std::cout, color);
+            std::cout << "итог: freestanding запрещает использованное — "
+                         "сборки нет, как и должно быть\n";
+            return 1;
+        }
     }
 
     // Оптимизация перед генерацией (правила те же, что у kinic opt).
@@ -387,6 +408,11 @@ int cmd_build(const std::vector<std::string>& files, const std::string& out,
         }
         // «не добавлять ни байта»: сперва сканируем всё, что реально используется
         kinii::CodeGen cg(diags, f);
+        if (freestanding) {
+            cg.set_freestanding(true);
+            std::cout << "freestanding: только kernel32, без CRT/libstdc++; "
+                         "запрещённое честно пойдёт в K3001\n";
+        }
         for (kinii::FileId fid : driver.order())
             cg.scan_features(driver.ast_of(fid));
         cg.begin();
@@ -419,6 +445,10 @@ int cmd_build(const std::vector<std::string>& files, const std::string& out,
                " -ffunction-sections -fdata-sections -Wl,--gc-sections -s";
     } else {
         cmd += " -O2 -s";
+    }
+    if (freestanding) {
+        // -nostdlib: никакой CRT; вход задаёт сгенерированная _start.
+        cmd += " -nostdlib -lkernel32 -e _start";
     }
     int rc = std::system(cmd.c_str());
     if (rc != 0) {
@@ -521,12 +551,15 @@ int main(int argc, char** argv) {
     if (cmd == "build") {
         std::string out;
         bool tiny = false;
+        bool freestanding = false;
         std::vector<std::string> files;
         for (size_t i = 1; i < positional.size(); ++i) {
             if (positional[i] == "-o" && i + 1 < positional.size()) {
                 out = positional[++i];
             } else if (positional[i] == "--tiny") {
                 tiny = true;
+            } else if (positional[i] == "--freestanding") {
+                freestanding = true;
             } else {
                 files.push_back(positional[i]);
             }
@@ -544,7 +577,7 @@ int main(int argc, char** argv) {
                 for (const auto& e : prefixed(dir, pr.entries)) {
                     std::vector<std::string> one = prefixed(dir, pr.lib);
                     one.push_back(e);
-                    int rc = cmd_build(one, this_out, color, tiny);
+                    int rc = cmd_build(one, this_out, color, tiny, freestanding);
                     if (rc != 0) return rc;
                 }
                 return 0;
@@ -559,7 +592,7 @@ int main(int argc, char** argv) {
             std::cerr << "kinic build: укажите хотя бы один файл\n";
             return 2;
         }
-        return cmd_build(files, out, color, tiny);
+        return cmd_build(files, out, color, tiny, freestanding);
     }
 
     if (cmd == "fmt") {
