@@ -419,6 +419,7 @@ std::vector<Token> lex_file(FileId fid, const std::string& src, DiagnosticEngine
                 continue;
             case '|':
                 if (n == '|') { L.bump(); out.push_back(L.make(Tok::Or, b, "||")); }
+                else if (n == '>') { L.bump(); out.push_back(L.make(Tok::Pipeline, b, "|>")); }
                 else out.push_back(L.make(Tok::Pipe, b, "|"));
                 continue;
             case '^': out.push_back(L.make(Tok::Caret, b, "^")); continue;
@@ -552,6 +553,7 @@ const char* tok_name(Tok t) {
         case Tok::Percent: return "%";
         case Tok::Amp: return "&";
         case Tok::Pipe: return "|";
+        case Tok::Pipeline: return "|>";
         case Tok::Caret: return "^";
         case Tok::Tilde: return "~";
         case Tok::Bang: return "!";

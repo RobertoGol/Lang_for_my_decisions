@@ -1,0 +1,22 @@
+//---- [LOGIC] ----/
+// Пайплайн: a |> f(b) значит f(a, b) — читаем слева направо
+
+fn add(src: u32, n: u32) -> u32 {
+    return src + n;
+}
+
+fn describe(src: u32) -> string {
+    if (src > 100) { return "много"; }
+    return "мало";
+}
+
+app_entry {
+    let u32 cookie = 95;
+
+    // шаг с аргументом и голый шаг
+    let u32 шаг1 = cookie |> add(5) |> add(100);
+    print("95 |> add(5) |> add(100) = ", шаг1);
+
+    // справа другая функция-результат
+    print("шаг1 |> describe: ", шаг1 |> describe());
+}

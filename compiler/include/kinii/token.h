@@ -21,7 +21,7 @@ enum class Tok : uint8_t {
     TyU8, TyU16, TyU32, TyU64, TyString, TyBool, TyPtr, TyVWord, TyVAddr, TyList, TyMap,
     // пунктуация и операторы
     Plus, Minus, Star, Slash, Percent,
-    Amp, Pipe, Caret, Tilde, Bang,
+    Amp, Pipe, Pipeline, Caret, Tilde, Bang,
     Assign, Eq, NotEq, Lt, Gt, Le, Ge, And, Or, Shl, Shr,
     Arrow, FatArrow, Dot, Comma, Semi, Colon, Question,
     LParen, RParen, LBracket, RBracket, LBrace, RBrace,

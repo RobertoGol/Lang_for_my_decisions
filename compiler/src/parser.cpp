@@ -639,7 +639,7 @@ private:
 
     ExprP parse_expr() { return parse_assign(); }
     ExprP parse_assign() {
-        ExprP lhs = parse_ternary();
+        ExprP lhs = parse_pipeline();
         if (!lhs) return nullptr;
         if (check(Tok::Assign)) {
             advance();
@@ -660,6 +660,44 @@ private:
             return e;
         }
         return lhs;
+    }
+
+    // Пайплайн: «xs |> этап(x)» — самый низкий приоритет (ниже '=' корректно
+    // вставляет правую часть присваивания). Трансформируем честным вызовом:
+    // a |> f(b)  ==  f(a, b);  a |> f  ==  f(a). Проверки дерева семантики и
+    // бэкенда работают как для обычного вызова — код не ветвится.
+    ExprP pipeline(const Token& op, ExprP l, ExprP r) {
+        if (!l || !r) return nullptr;
+        if (r->kind == Expr::Call && !r->kids.empty()) {
+            // span до перемещений
+            const Span sp = span_join(l->span, r->span);
+            r->kids.insert(r->kids.begin() + 1, std::move(l));
+            r->span = sp;
+            return r;
+        }
+        if (r->kind == Expr::Ident) {
+            auto e = std::make_unique<Expr>(Expr::Call);
+            e->span = span_join(l->span, r->span);
+            e->kids.push_back(std::move(r));
+            e->kids.push_back(std::move(l));
+            return e;
+        }
+        dg_.error("K1006", "справа от '|>' должна быть функция или вызов", span_of(op))
+            .hint("«|>» подставляет левое значение первым аргументом: "
+                  "xs |> отсортировать() | xs |> прибавить(2); голая переменная "
+                  "не пойдёт — нужен вызов")
+            .emit();
+        return nullptr;
+    }
+
+    ExprP parse_pipeline() {
+        ExprP l = parse_ternary();
+        while (l && check(Tok::Pipeline)) {
+            const Token& op = advance();
+            ExprP r = parse_ternary();
+            l = pipeline(op, std::move(l), std::move(r));
+        }
+        return l;
     }
 
     ExprP parse_ternary() {
