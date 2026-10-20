@@ -7,6 +7,7 @@
 #include "kinii/ast.h"
 #include "kinii/diagnostic.h"
 
+#include <functional>
 #include <iostream>
 #include <sstream>
 
@@ -14,75 +15,9 @@ namespace kinii {
 
 namespace {
 
-// Встроенный минимальный рантайм: print/len/read_line и системные вызовы
-// sys.exit / sys.time.now / sys.rnd.next — всё честно и видно в сгенерированном C++.
-// u8 печатается числом (у std::cout uint8_t печатался бы как символ).
-const char* kRuntime = R"RT(
-// Стандартная библиотека C++ (runtime KINII генерирует сам).
-#include <array>
-#include <chrono>
-#include <cstdint>
-#include <cstdlib>
-#include <iostream>
-#include <random>
-#include <string>
-#include <thread>
-#include <type_traits>
-#include <unordered_map>
-#include <vector>
-
-namespace kn {
-template <class T>
-void put_one(const T& v) {
-    if constexpr (std::is_integral_v<T> && sizeof(T) == 1)
-        std::cout << (int)v;
-    else
-        std::cout << v;
-}
-// print работает с любым числом аргументов: печатает подряд и переводит строку.
-template <class... A>
-void print(const A&... a) {
-    (put_one(a), ...);
-    std::cout << std::endl;
-}
-template <class C>
-auto len(const C& c) -> decltype(c.size()) {
-    return c.size();
-}
-inline std::string read_line(const std::string& prompt = "") {
-    if (!prompt.empty()) std::cout << prompt;
-    std::string s;
-    std::getline(std::cin, s);
-    return s;
-}
-[[noreturn]] inline void sys_exit(uint64_t code) {
-    std::exit((int)code);
-}
-inline uint64_t time_now_ms() {
-    using namespace std::chrono;
-    return (uint64_t)duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
-}
-inline uint64_t rnd_next(uint64_t limit) {
-    if (limit == 0) return 0;
-    static std::mt19937_64 rng{ std::random_device{}() };
-    std::uniform_int_distribution<uint64_t> d(0, limit - 1);
-    return d(rng);
-}
-} // namespace kn
-
-// «строка + число» — это склейка, а не арифметика указателей.
-template <class T>
-inline std::enable_if_t<std::is_integral<T>::value, std::string>
-operator+(const std::string& s, T v) {
-    return s + std::to_string(v);
-}
-
-template <class T>
-inline std::enable_if_t<std::is_integral<T>::value, std::string>
-operator+(T v, const std::string& s) {
-    return std::to_string(v) + s;
-}
-)RT";
+// Замечание: прелюдия сгенерирована в CodeGen::begin() по флагам использований
+// (scan_features) — см. там. Здесь её нет, потому что «компилятор не добавляет
+// от себя ни байта»: без вызовов print/len не попадает ни функция, ни хедер.
 
 std::string cxx_escape(const std::string& s) {
     std::string r;
@@ -158,10 +93,195 @@ void CodeGen::line(const std::string& text) {
     os_ << text << "\n";
 }
 
+// ---------- «компилятор не добавляет ни байта» ----------
+// Прелюдия печатается ТОЛЬКО из того, что реально используется в проекте:
+// runtime-функция без вызова не проходит, хедер без виновника не обходится.
+// Мёртвый код не включён, скрытого рантайма нет.
+
+// Скан использований: вызовы, строковые литералы, типы, узлы/изоляты.
+//
+// ВАЖНО: это « shotgun-сканер» — он отмечает флаг чуть щедрее, чем мог бы
+// (например, len("abc") включает <string>), но никогда не обманывает наоборот:
+// если флага нет — значит, использование точно не встретится в коде.
+
+void CodeGen::scan_features(const Stmt* root) {
+    if (!root) return;
+
+    std::function<void(const TypeExpr*)> walk_type = [&](const TypeExpr* t) {
+        if (!t) return;
+        switch (t->kind) {
+            case TypeExpr::Named:
+                if (t->name == "string") need_string_ = true;
+                break;
+            case TypeExpr::List:
+                need_vector_ = true;
+                walk_type(t->elem.get());
+                break;
+            case TypeExpr::Map:
+                need_map_ = true;
+                walk_type(t->elem.get());
+                walk_type(t->val.get());
+                break;
+            case TypeExpr::Array:
+                need_array_ = true;
+                walk_type(t->elem.get());
+                break;
+            default: break; // Cell и Named-структуры: смотрим внутрь
+        }
+        if (t->kind == TypeExpr::Cell || t->kind == TypeExpr::Named)
+            walk_type(t->elem.get());
+    };
+
+    std::function<void(const Expr*)> walk_expr = [&](const Expr* e) {
+        if (!e) return;
+        if (e->kind == Expr::Str) need_string_ = true;
+        if (e->kind == Expr::Call && !e->kids.empty() &&
+            e->kids[0]) {
+            std::string callee_path =
+                dotted_path(e->kids[0].get());
+            if (e->kids[0]->kind == Expr::Ident)
+                callee_path = e->kids[0]->text;
+            else if (e->kids[0]->kind == Expr::Member) {
+                std::string base = dotted_path(e->kids[0]->kids[0].get());
+                if (!base.empty())
+                    callee_path = base + "." + e->kids[0]->field;
+            }
+            if (callee_path == "print" || callee_path == "console.print")
+                need_print_ = true;
+            else if (callee_path == "len")
+                need_len_ = true;
+            else if (callee_path == "console.read_input" ||
+                     callee_path == "console.read_line")
+                need_read_ = true;
+            else if (callee_path == "sys.exit")
+                need_exit_ = true;
+            else if (callee_path == "sys.time.now")
+                need_time_ = true;
+            else if (callee_path == "sys.rnd.next")
+                need_rnd_ = true;
+        }
+        for (const auto& k : e->kids) walk_expr(k.get());
+    };
+
+    std::function<void(const Stmt*)> walk_stmt = [&](const Stmt* s) {
+        if (!s) return;
+        walk_type(s->type.get());
+        walk_type(s->ret.get());
+        for (const auto& p : s->params) walk_type(p.type.get());
+        for (const auto& f : s->fields) walk_type(f.type.get());
+        walk_expr(s->init.get());
+        for (const auto& k : s->kids) walk_expr(k.get());
+        for (const auto& b : s->body) walk_stmt(b.get());
+        for (const auto& b : s->else_body) walk_stmt(b.get());
+        for (const auto& c : s->cases) walk_expr(c.value.get());
+        if (s->block) walk_stmt(s->block.get());
+        if (s->kind == Stmt::NodeDecl || s->kind == Stmt::IsolateDecl)
+            need_thread_ = true;
+    };
+    walk_stmt(root);
+}
+
 void CodeGen::begin() {
     os_ << "// Сгенерировано kinic из KINII v3 — является выходом компилятора.\n";
     os_ << "// Правки вручную потеряются: следующий запуск перезапишет файл.\n";
-    os_ << kRuntime << "\n";
+    os_ << "// Прелюдия подключает только то, что реально использовано: мёртвый код\n";
+    os_ << "// и неиспользованные хедеры в бинарник не попадают.\n";
+    os_ << "#include <cstdint>\n";
+    if (need_string_) os_ << "#include <string>\n";
+    if (need_vector_) os_ << "#include <vector>\n";
+    if (need_array_) os_ << "#include <array>\n";
+    if (need_map_) os_ << "#include <unordered_map>\n";
+    if (need_thread_) os_ << "#include <thread>\n";
+    if (need_exit_) os_ << "#include <cstdlib>\n";
+    if (need_time_) os_ << "#include <chrono>\n";
+    if (need_rnd_) os_ << "#include <random>\n";
+
+    std::string rt = "namespace kn {\n";
+    if (need_print_) {
+        rt += R"RT(#include <type_traits>
+#include <cstdio>
+template <class T>
+std::string text_of(const T& v) {
+    if constexpr (std::is_same_v<std::decay_t<T>, const char*>)
+        return std::string(v);
+    else if constexpr (std::is_same_v<std::decay_t<T>, bool>)
+        return v ? "1" : "0";
+    else if constexpr (std::is_integral_v<T> && sizeof(T) == 1)
+        return std::to_string((int)v);
+    else if constexpr (std::is_integral_v<T>)
+        return std::to_string(v);
+    else
+        return v;
+}
+// print печатает аргументы подряд и переводит строку (как всегда).
+template <class... A>
+void print(const A&... a) {
+    std::string out;
+    ((out += text_of(a)), ...);
+    out += '\n';
+    fputs(out.c_str(), stdout);
+}
+)RT";
+    }
+    if (need_len_) {
+        rt += R"RT(template <class C>
+auto len(const C& c) -> decltype(c.size()) {
+    return c.size();
+}
+)RT";
+    }
+    if (need_read_) {
+        rt += R"RT(inline std::string read_line(const std::string& prompt = "") {
+    if (!prompt.empty()) fputs(prompt.c_str(), stdout);
+    std::string s;
+    int c;
+    while ((c = fgetc(stdin)) != EOF && c != '\n')
+        s.push_back((char)c);
+    return s;
+}
+)RT";
+    }
+    if (need_exit_) {
+        rt += R"RT([[noreturn]] inline void sys_exit(uint64_t code) {
+    std::exit((int)code);
+}
+)RT";
+    }
+    if (need_time_) {
+        rt += R"RT(inline uint64_t time_now_ms() {
+    using namespace std::chrono;
+    return (uint64_t)duration_cast<milliseconds>(
+        system_clock::now().time_since_epoch()).count();
+}
+)RT";
+    }
+    if (need_rnd_) {
+        rt += R"RT(inline uint64_t rnd_next(uint64_t limit) {
+    if (limit == 0) return 0;
+    static std::mt19937_64 rng{ std::random_device{}() };
+    std::uniform_int_distribution<uint64_t> d(0, limit - 1);
+    return d(rng);
+}
+)RT";
+    }
+    rt += "} // namespace kn\n";
+    if (rt != "namespace kn {\n} // namespace kn\n") os_ << rt << "\n";
+
+    if (need_string_) {
+        // «строка + число» — это склейка, а не арифметика указателей.
+        os_ << R"RT(template <class T>
+inline std::enable_if_t<std::is_integral<T>::value, std::string>
+operator+(const std::string& s, T v) {
+    return s + std::to_string(v);
+}
+
+template <class T>
+inline std::enable_if_t<std::is_integral<T>::value, std::string>
+operator+(T v, const std::string& s) {
+    return std::to_string(v) + s;
+}
+)RT";
+    }
 }
 
 std::string CodeGen::type_str(const TypeExpr* t) {

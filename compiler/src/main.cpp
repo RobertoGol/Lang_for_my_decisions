@@ -316,10 +316,17 @@ int cmd_opt(const std::vector<std::string>& files, bool color) {
     return 0;
 }
 
-// Сборка: kinic build <файлы...> [-o out.exe]
-// Полный конвейер: проверки -> оптимизация -> генерация C++ -> g++ -O2 -> exe.
+// Сборка: kinic build <файлы...> [-o out.exe] [--tiny]
+// Полный конвейер: проверки -> оптимизация -> генерация C++ -> g++ -> exe.
+//
+// Профиль tiny (для охоты за байтом и будущей freestanding-ОС):
+//   -Os                       оптимизация на размер вместо скорости
+//   -fno-exceptions -fno-rtti — обработчики исключений и RTTI с их таблицами
+//                              не включаются (generated код их не использует)
+//   -fno-threadsafe-statics   — статический mt_раблокировки локальных static
+//   --gc-sections             — линкер выкидывает неиспользуемые функции/данные
 int cmd_build(const std::vector<std::string>& files, const std::string& out,
-              bool color) {
+              bool color, bool tiny) {
     if (files.empty()) return 0;
     if (!out.empty() && files.size() > 1) {
         std::cerr << "kinic build: -o задаётся для одного входного файла\n";
@@ -378,7 +385,10 @@ int cmd_build(const std::vector<std::string>& files, const std::string& out,
             std::cerr << "kinic build: не могу создать " << cpp_path << "\n";
             return 2;
         }
+        // «не добавлять ни байта»: сперва сканируем всё, что реально используется
         kinii::CodeGen cg(diags, f);
+        for (kinii::FileId fid : driver.order())
+            cg.scan_features(driver.ast_of(fid));
         cg.begin();
         for (kinii::FileId fid : driver.order())
             cg.declare_types(driver.ast_of(fid));
@@ -399,10 +409,20 @@ int cmd_build(const std::vector<std::string>& files, const std::string& out,
 
     std::cout << "сгенерирован " << cpp_path << " — запускаю g++...\n";
     std::string cmd = "g++ \"" + cpp_path + "\" -o \"" + exe_path +
-                      "\" -std=c++20 -O2 -s";
+                      "\" -std=c++20";
+    if (tiny) {
+        std::cout << "профиль tiny: -O1 + выкинуты исключения/RTTI, "
+                     "мёртвые секции отброшены\n";
+        // -Os/-Oz на этом тулчейне (gcc 16.1, MinGW) ломают линковку
+        // std::string (undefined basic_string move ctor) — поэтому -O1.
+        cmd += " -O1 -fno-exceptions -fno-rtti -fno-threadsafe-statics"
+               " -ffunction-sections -fdata-sections -Wl,--gc-sections -s";
+    } else {
+        cmd += " -O2 -s";
+    }
     int rc = std::system(cmd.c_str());
     if (rc != 0) {
-        std::cout << "итог: g++ вернул код " << (rc == -1 ? -1 : rc / 256)
+        std::cout << "итог: g++ вернул код " << (rc == -1 ? -1 : rc)
                   << " — см. ошибки выше\n";
         return 1;
     }
@@ -500,10 +520,13 @@ int main(int argc, char** argv) {
     }
     if (cmd == "build") {
         std::string out;
+        bool tiny = false;
         std::vector<std::string> files;
         for (size_t i = 1; i < positional.size(); ++i) {
             if (positional[i] == "-o" && i + 1 < positional.size()) {
                 out = positional[++i];
+            } else if (positional[i] == "--tiny") {
+                tiny = true;
             } else {
                 files.push_back(positional[i]);
             }
@@ -521,7 +544,7 @@ int main(int argc, char** argv) {
                 for (const auto& e : prefixed(dir, pr.entries)) {
                     std::vector<std::string> one = prefixed(dir, pr.lib);
                     one.push_back(e);
-                    int rc = cmd_build(one, this_out, color);
+                    int rc = cmd_build(one, this_out, color, tiny);
                     if (rc != 0) return rc;
                 }
                 return 0;
@@ -536,7 +559,7 @@ int main(int argc, char** argv) {
             std::cerr << "kinic build: укажите хотя бы один файл\n";
             return 2;
         }
-        return cmd_build(files, out, color);
+        return cmd_build(files, out, color, tiny);
     }
 
     if (cmd == "fmt") {

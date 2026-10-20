@@ -32,7 +32,10 @@ class CodeGen {
 public:
     CodeGen(DiagnosticEngine& dg, std::ostream& os);
 
-    // Прецедент: include-ы + минимальный рантайм.
+    // Прецедент: include-ы + минимальный рантайм. Перед ним вызывается
+    // scan_features для каждого файла проекта — прелюдия подключает только
+    // то, что реально используется (принцип «компилятор не добавляет ни байта»).
+    void scan_features(const Stmt* root);
     void begin();
 
     // Шаг 1: структуры/перечисления файла; шаг 2: константы; шаг 3: функции.
@@ -76,6 +79,13 @@ private:
 
     // Переменные перебора «for pair in map»: запись даёт .key / .value.
     std::set<std::string> entry_vars_;
+
+    // Что реально используется в проекте — по этим флагам печатается прелюдия.
+    bool need_print_ = false, need_len_ = false, need_read_ = false;
+    bool need_exit_ = false, need_time_ = false, need_rnd_ = false;
+    bool need_thread_ = false;
+    bool need_string_ = false, need_vector_ = false, need_array_ = false,
+         need_map_ = false;
 };
 
 // Готовит имя exe по умолчанию (стебель входного файла) — helper для CLI.
