@@ -126,6 +126,34 @@ if (JSON.stringify(items14 && items14.map((i) => i.label)) !== JSON.stringify(['
     console.log('FAIL 18: цены.k → ' + JSON.stringify(items14)); ++fails;
 }
 
+// ---------- перебор словаря: forPairKVInBuffer → .key / .value ----------
+const pairDoc = { getText: () => [
+    '//---- LOGIC ----/',
+    'let map<string, u32> цены = ["хлеб": 50];',
+    'for pair in цены {',
+    '    print(pair.key);',
+    '}',
+].join('\n') };
+const itemsPair = api.provideFieldHints(pairDoc, 'pair', '', false).map((i) => i.label);
+if (itemsPair[0] !== 'key' || itemsPair[1] !== 'value') {
+    console.log('FAIL 19: pair. → ' + JSON.stringify(itemsPair)); ++fails;
+}
+const itemsPairT = api.provideFieldHints(pairDoc, 'pair', 'val', false).map((i) => i.label);
+if (JSON.stringify(itemsPairT) !== JSON.stringify(['value'])) {
+    console.log('FAIL 20: pair.val → ' + JSON.stringify(itemsPairT)); ++fails;
+}
+// итератор по НЕ-словарю — подсказок быть не должно
+const listDoc = { getText: () => [
+    'let list<string> имена = [];',
+    'for item in имена {',
+    '    print(item);',
+    '}',
+].join('\n') };
+const itemsList = api.provideFieldHints(listDoc, 'item', '', false);
+if (itemsList) {
+    console.log('FAIL 21: item. по списку → ' + JSON.stringify(itemsList)); ++fails;
+}
+
 console.log(says.filter((s) => s.startsWith('подсказки: поля')).join('\n'));
 if (fails) { console.log('FIELD_HINTS: FAIL (' + fails + ')'); process.exit(1); }
 console.log('FIELD_HINTS: OK');

@@ -11,22 +11,37 @@ function frame(body) {
 const text =
   'app_entry {\n' +
   '    let map<string, u32> prices = ["a": 1];\n' +
+  '    for pair in prices {\n' +
+  '        print(pair.key);\n' +
+  '    }\n' +
   '    print(prices.keys());\n' +
   '}\n';
 const uri = 'file:///G:/Project/Game/KINII/examples/lsp_map_hover.vc';
 
-// шлём hover на каждый символ 18..21 (само слово keys) — ждём doc ключей
-const probes = [];
-for (let c = 18; c <= 21; ++c)
-  probes.push({ jsonrpc: '2.0', id: 100 + c, method: 'textDocument/hover',
-                params: { textDocument: { uri }, position: { line: 2, character: c } } });
+// шлём hover на:
+//  char 9 строки 2  — pair (переменная перебора)     → запись словаря
+//  char 20 строки 3 — key (поле записи)              → ключ записи
+//  char 18..21 строки 5 — keys (m.keys())            → doc ключей
+const probes = [
+  { id: 100, line: 2, c: 9,  want: 'запись словаря map<string, u32>' },
+  { id: 101, line: 2, c: 10, want: 'запись словаря map<string, u32>' },
+  { id: 102, line: 3, c: 20, want: 'ключ записи' },
+  { id: 103, line: 3, c: 21, want: 'ключ записи' },
+  { id: 104, line: 5, c: 18, want: 'm.keys() — list<K>' },
+  { id: 105, line: 5, c: 21, want: 'm.keys() — list<K>' },
+];
+const probesMsgs = probes.map((p) => ({
+  jsonrpc: '2.0', id: p.id, method: 'textDocument/hover',
+  params: { textDocument: { uri }, position: { line: p.line, character: p.c } },
+}));
+
 
 const msgs = [
   { jsonrpc: '2.0', id: 1, method: 'initialize', params: { rootUri: 'file:///G:/Project/Game/KINII/examples' } },
   { jsonrpc: '2.0', method: 'initialized', params: {} },
   { jsonrpc: '2.0', method: 'textDocument/didOpen',
     params: { textDocument: { uri, languageId: 'kinii', version: 1, text } } },
-  ...probes,
+  ...probesMsgs,
   { jsonrpc: '2.0', method: 'shutdown', params: {} },
   { jsonrpc: '2.0', method: 'exit' },
 ];
@@ -44,16 +59,21 @@ p.on('exit', (code) => {
     .map((body) => { try { return JSON.parse(body); } catch (e) { return null; } })
     .filter((j) => j && typeof j.id === 'number' && j.id >= 100);
   let fails = 0;
-  for (const j of outs) {
-    const doc = j.result && j.result.contents ? j.result.contents.value : 'null';
-    if (doc.indexOf('m.keys() — list<K>') < 0) {
-      console.log('FAIL char=' + (j.id - 100) + ' → ' + doc);
+  for (const p of probes) {
+    const j = outs.find((o) => o.id === p.id);
+    const doc = j && j.result && j.result.contents ? j.result.contents.value : 'null';
+    if (doc.indexOf(p.want) < 0) {
+      console.log('FAIL line=' + p.line + ' char=' + p.c + ' → ' + doc.replace(/\n/g, ' | '));
       ++fails;
     }
   }
-  if (outs.length !== 4) { console.log('FAIL: hover ' + outs.length + ' из 4 вернулись'); ++fails; }
+  if (outs.length !== probes.length) {
+    console.log('FAIL: hover ' + outs.length + ' из ' + probes.length + ' вернулись');
+    ++fails;
+  }
   if (fails) { console.log('LSP_MAP_HOVER: FAIL (' + fails + ')'); process.exit(1); }
-  console.log('LSP_MAP_HOVER: OK (4/4 hover с doc m.keys())');
+  console.log('LSP_MAP_HOVER: OK (' + probes.length + '/' + probes.length +
+              ': pair → запись словаря, pair.key → ключ, m.keys() → doc)');
   process.exit(code === 0 ? 0 : 1);
 });
 setTimeout(() => { console.log('FAIL: сервер не ответил за 5 с'); process.exit(1); }, 5000);

@@ -14,6 +14,7 @@
 #include "kinii/sema.h"
 
 #include <cstdio>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <sstream>
@@ -419,6 +420,54 @@ const Stmt* find_decl(const Stmt* root, const std::string& name) {
     return nullptr;
 }
 
+// ---------- hover для перебора (for pair in …) ----------
+
+// Всё, что в файле объявлено с явным типом map<K, V> (в т.ч. в телах):
+// имя -> «K\x1FV». Нужны для подписи .key/.value у записей перебора.
+void collect_map_lets(const Stmt* s, std::map<std::string, std::string>& out) {
+    if (!s) return;
+    if ((s->kind == Stmt::Let || s->kind == Stmt::Const) && s->type &&
+        s->type->kind == TypeExpr::Map && !s->name.empty())
+        out[s->name] = type_to_text(s->type->elem.get()) + "\x1F" +
+                       type_to_text(s->type->val.get());
+    for (const auto& b : s->body) collect_map_lets(b.get(), out);
+    if (s->block) collect_map_lets(s->block.get(), out);
+    for (const auto& c : s->cases)
+        for (const auto& b : c.body) collect_map_lets(b.get(), out);
+}
+
+// Источник перебора ближайшего (внутреннего) цикла «for base in …»,
+// тело которого содержит (ln, cl). "" — если такой цикл не найден
+// или источник — не простое имя (m.keys() и т.п.).
+std::string for_source_at(const Stmt* root, const std::string& base,
+                          uint32_t ln, uint32_t cl) {
+    if (!root) return "";
+    std::string best;
+    Span best_span;
+    std::function<void(const Stmt*)> walk = [&](const Stmt* s) {
+        if (!s) return;
+        if (s->kind == Stmt::ForIn && s->name == base &&
+            s->span.begin.line <= ln && ln <= s->span.end.line &&
+            !s->kids.empty() && s->kids[0] &&
+            s->kids[0]->kind == Expr::Ident) {
+            bool better =
+                best.empty() || s->span.begin.line > best_span.begin.line ||
+                (s->span.begin.line == best_span.begin.line &&
+                 s->span.begin.col >= best_span.begin.col);
+            if (better) {
+                best = s->kids[0]->text;
+                best_span = s->span;
+            }
+        }
+        for (const auto& b : s->body) walk(b.get());
+        if (s->block) walk(s->block.get());
+        for (const auto& c : s->cases)
+            for (const auto& b : c.body) walk(b.get());
+    };
+    walk(root);
+    return best;
+}
+
 std::string render_fn_sig(const Stmt& s) {
     std::string r = s.is_pub ? "pub fn " : "fn ";
     r += s.name + "(";
@@ -590,6 +639,48 @@ void hover_at(const std::string& path, const std::string& uri,
                                                  : "") +
                                       "', строка " +
                                       std::to_string((unsigned)sym->span.begin.line);
+            }
+        }
+    }
+
+    // Переменная перебора и её поля .key/.value: локальные имена живут в
+    // scope'ах семантики, в общей таблице их нет — ищем честно по AST.
+    if (info.empty()) {
+        std::map<std::string, std::string> maps;
+        collect_map_lets(driver.ast_of(hfid), maps);
+        std::string src = for_source_at(driver.ast_of(hfid), name, ln, cl);
+        if (!src.empty()) {
+            auto it = maps.find(src);
+            if (it != maps.end()) {
+                size_t sep = it->second.find('\x1F');
+                std::string kt = it->second.substr(0, sep);
+                std::string vt = it->second.substr(sep + 1);
+                info = "for " + name + " — запись словаря map<" + kt + ", " + vt +
+                       ">\n" + name + ".key — ключ (" + kt + ")\n" + name +
+                       ".value — значение (" + vt + ")";
+            } else {
+                info = "for " + name + " — элемент перебора '" + src + "'";
+            }
+        }
+    }
+
+    // hover на pair.key / pair.value у записи перебора.
+    if (info.empty() && dotted != name) {
+        size_t d = dotted.rfind('.');
+        std::string base = d == std::string::npos ? "" : dotted.substr(0, d);
+        std::string field = d == std::string::npos ? "" : dotted.substr(d + 1);
+        if (!base.empty() && (field == "key" || field == "value")) {
+            std::map<std::string, std::string> maps;
+            collect_map_lets(driver.ast_of(hfid), maps);
+            std::string src = for_source_at(driver.ast_of(hfid), base, ln, cl);
+            auto it = maps.find(src);
+            if (!src.empty() && it != maps.end()) {
+                size_t sep = it->second.find('\x1F');
+                info = field == "key"
+                           ? "ключ записи '" + base + "' (" +
+                                 it->second.substr(0, sep) + ")"
+                           : "значение записи '" + base + "' (" +
+                                 it->second.substr(sep + 1) + ")";
             }
         }
     }

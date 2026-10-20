@@ -576,6 +576,22 @@ function varMapKVInBuffer(doc, varName) {
     return null;
 }
 
+// Запись перебора: «for pair in prices», где prices — map<K, V>.
+// Возвращает { k, v } словаря-источника или null.
+function forPairKVInBuffer(doc, varName) {
+    let lines;
+    try { lines = doc.getText().split('\n'); } catch (e) { return null; }
+    const re = /^\s*for\s+([A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё_0-9]*)\s+in\s+([A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё_0-9]*)\s*\{?\s*(?=$|\/\/)/;
+    for (let i = lines.length - 1; i >= 0; --i) {
+        const raw = lines[i].replace(/\/\/.*$/, '').trimEnd();
+        const m = re.exec(raw);
+        if (!m || m[1] !== varName) continue;
+        const kv = varMapKVInBuffer(doc, m[2]);
+        if (kv) return kv;
+    }
+    return null;
+}
+
 // Поля структур: имя структуры → [{ name, type }]. Вложенные поля не ждём.
 function scanStructFields(text) {
     const out = new Map();
@@ -628,6 +644,19 @@ function provideFieldHints(doc, owner, typed, rich) {
             isFn = true;
             list = MAP_MEMBERS.filter(
                 (f) => f.name.toLowerCase().startsWith(typed.toLowerCase()));
+        }
+        if (!list || !list.length) {
+            const pairKV = forPairKVInBuffer(doc, owner);
+            if (pairKV) {
+                origin = 'запись map<' + pairKV.k + ', ' + pairKV.v +
+                         '> (pair.key / pair.value)';
+                const pairMembers = [
+                    { name: 'key', type: '(' + pairKV.k + ') — ключ пары' },
+                    { name: 'value', type: '(' + pairKV.v + ') — значение пары (можно менять)' },
+                ];
+                list = pairMembers.filter(
+                    (f) => f.name.toLowerCase().startsWith(typed.toLowerCase()));
+            }
         }
         if (!list || !list.length) {
             const structs = structIndexFor(doc);

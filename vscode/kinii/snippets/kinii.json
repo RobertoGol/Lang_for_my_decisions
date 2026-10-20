@@ -79,6 +79,21 @@
         ],
         "description": "Цикл по списку"
     },
+    "forpair": {
+        "prefix": "forpair",
+        "body": [
+            "for ${1:pair} in ${2:словарь} {",
+            "\tprint(${1:pair}.key, \" = \", ${1:pair}.value);",
+            "\t$0",
+            "}"
+        ],
+        "description": "Перебор словаря: pair.key / pair.value"
+    },
+    "pipe": {
+        "prefix": "pipe",
+        "body": "${1:значение} |> ${2:шаг}(${3})",
+        "description": "Пайплайн |> — значение первым аргументом: a |> f(b) = f(a, b)"
+    },
     "decide": {
         "prefix": "decide",
         "body": [
