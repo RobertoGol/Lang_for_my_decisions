@@ -345,11 +345,15 @@ void print(const A&... a) {
     if (need_time_ && !freestanding_) os_ << "#include <chrono>\n";
     if (need_rnd_ && !freestanding_) os_ << "#include <random>\n";
 
+    // Честный фикс B-04: инклуды прелюдии обязаны лежать ДО namespace kn,
+    // иначе они становятся kn::std и сборка держится на везении include-guard'ов
+    // (проект с print/len/read_* без string/list/map честно не собирался).
+    if (need_print_) os_ << "#include <type_traits>\n";
+    if (need_print_ || need_read_) os_ << "#include <cstdio>\n";
+
     std::string rt = "namespace kn {\n";
     if (need_print_) {
-        rt += R"RT(#include <type_traits>
-#include <cstdio>
-template <class T>
+        rt += R"RT(template <class T>
 std::string text_of(const T& v) {
     if constexpr (std::is_same_v<std::decay_t<T>, const char*>)
         return std::string(v);
@@ -647,6 +651,16 @@ std::string CodeGen::gen_expr(const Expr* e) {
                         .hint("поддерживаются: console.print, console.read_input, "
                               "console.read_line, sys.exit, sys.time.now, sys.rnd.next")
                         .hint("что-то другое из sys.* — опишите обычной функцией")
+                        .emit();
+                } else {
+                    // Честный страховочный фильтр B-07: сюда доходит метод на
+                    // результате вызова/индекса — раньше это молча давало 0.
+                    saw_error_ = true;
+                    dg_.error("K3004",
+                              "метод на результате вызова/индекса не поддержан "
+                              "бэкендом",
+                              callee->span)
+                        .hint("сначала сохраните значение в переменную")
                         .emit();
                 }
                 return "0";

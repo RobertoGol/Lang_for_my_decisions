@@ -239,7 +239,8 @@ private:
 
         static const std::set<std::string> nums = {"u8", "u16", "u32", "u64", "v_word"};
         bool dst_num = nums.count(dst) != 0, src_num = nums.count(src) != 0;
-        if (dst_num && src_num) return; // числа между собой: усечения ловим позже
+        if (dst_num && src_num) return; // числа между собой: усечение ловится
+                                        // честно K2005 при литералах (B-08)
         if (dst.rfind("cell", 0) == 0 || src.rfind("cell", 0) == 0) return;
         if (dst.rfind("<выведен>", 0) == 0 || src.rfind("<выведен>", 0) == 0) return;
 
@@ -307,6 +308,41 @@ private:
 
                 if (st->init) {
                     walk_expr(st->init.get());
+
+                    // Честная проверка B-08: целочисленный литерал обязан
+                    // помещаться в честно объявленный тип — молчаливое
+                    // усечение C++ честно запрещено (K2005).
+                    if (st->type && st->init->kind == Expr::Num) {
+                        const std::string tt = type_text_of(st->type.get());
+                        static const std::set<std::string> width_types = {
+                            "u8", "u16", "u32", "u64"};
+                        if (width_types.count(tt) != 0) {
+                            unsigned long long v = 0;
+                            bool bad = false;
+                            try {
+                                v = std::stoull(st->init->text, nullptr, 0);
+                            } catch (const std::exception&) {
+                                bad = true; // сам u64 не вместил
+                            }
+                            unsigned long long mx = 0;
+                            if (tt == "u8") mx = 255ULL;
+                            else if (tt == "u16") mx = 65535ULL;
+                            else if (tt == "u32") mx = 4294967295ULL;
+                            else mx = 18446744073709551615ULL;
+                            if (bad || v > mx) {
+                                auto b = dg_.error(
+                                    "K2005",
+                                    "литерал " + st->init->text +
+                                        " не помещается в " + tt +
+                                        " (честный предел " + std::to_string(mx) +
+                                        ")",
+                                    st->init->span);
+                                b.hint("молчаливое усечение честно запрещено — возьмите более широкий тип");
+                                b.emit();
+                            }
+                        }
+                    }
+
                     if (st->type && st->type->kind == TypeExpr::Map) {
                         // Словарю с типом проверяем каждую пару честно:
                         // ключ -> K, значение -> V (K2003 с ролью для пояснения).
@@ -574,13 +610,39 @@ private:
                 // который проверит существование поля.
                 const Expr* dst = e->kids[0].get();
                 if (dst->kind == Expr::Ident) {
-                    if (!is_known_root(dst->text)) reference(dst->text, dst->span);
+                    // Честная проверка B-06: константа не меняется. is_const
+                    // задан при объявлении (Stmt::Const) и раньше никогда
+                    // не читался — теперь честная K2004.
+                    const Symbol* sym = cur()->find(dst->text);
+                    if (!sym) sym = find_global(dst->text);
+                    if (sym && sym->is_const) {
+                        auto b = dg_.error(
+                            "K2004",
+                            "нельзя писать в константу '" + dst->text + "'",
+                            dst->span);
+                        if (sym->span.begin.line)
+                            b.label(sym->span, "объявлена константой здесь");
+                        b.hint("константа не изменяется: объявите let");
+                        b.emit();
+                    } else if (!is_known_root(dst->text)) {
+                        reference(dst->text, dst->span);
+                    }
                 } else if (dst->kind == Expr::Index && dst->kids[0]->kind == Expr::Ident) {
                     // m[ключ] = значение: ключ должен подходить под K,
                     // записываемое — под V. Информацию о K/V несёт символ.
                     const Symbol* base = cur()->find(dst->kids[0]->text);
                     if (!base) base = find_global(dst->kids[0]->text);
-                    if (base && !base->kv_types.empty()) {
+                    if (base && base->is_const) {
+                        // Честная K2004 и для индексной записи в константу.
+                        auto b = dg_.error(
+                            "K2004",
+                            "нельзя писать в константу '" + dst->kids[0]->text + "'",
+                            dst->kids[0]->span);
+                        if (base->span.begin.line)
+                            b.label(base->span, "объявлена константой здесь");
+                        b.hint("константа не изменяется: объявите let");
+                        b.emit();
+                    } else if (base && !base->kv_types.empty()) {
                         size_t sep = base->kv_types.find('\x1F');
                         std::string kt = base->kv_types.substr(0, sep);
                         std::string vt = base->kv_types.substr(sep + 1);
@@ -650,6 +712,21 @@ private:
 
             case Expr::Member: {
                 const Expr* obj = e->kids[0].get();
+                // Честная проверка B-07: поле/метод на результате вызова или
+                // индексного выражения бэкенд честно не поддерживает — раньше
+                // это молча давало 0 (тишина запрещена). Честная K3004.
+                if (obj && (obj->kind == Expr::Call || obj->kind == Expr::Index)) {
+                    dg_.error(
+                            "K3004",
+                            "поле/метод на результате вызова или индекса "
+                            "не поддержаны бэкендом",
+                            e->span)
+                        .hint("сначала сохраните значение в переменную: "
+                              "let сохранённое = нужный_вызов();")
+                        .hint("затем обращайтесь к полю переменной: "
+                              "сохранённое." + e->field)
+                        .emit();
+                }
                 if (obj->kind == Expr::Ident) {
                     const Symbol* tsym = cur()->find(obj->text);
                     // Запись перебора словаря: честно только .key / .value.

@@ -394,6 +394,31 @@ int cmd_build(const std::vector<std::string>& files, const std::string& out,
     }
     if (stem.empty()) stem = kinii::stem_of(diags.file_path(entries.back()));
 
+    // Честная проверка B-10: в проекте без app_entry честной точки входа
+    // нет — раньше сборка доезжала до ld и выдавала сырую ошибку
+    // «undefined reference to WinMain». Честная K4005 объясняет по-человечески.
+    bool any_entry = false;
+    kinii::Span entry_span_hint;
+    for (kinii::FileId fid : driver.order()) {
+        if (kinii::Stmt* ast = driver.ast_of(fid)) {
+            for (const auto& s : ast->body)
+                if (s && s->kind == kinii::Stmt::AppEntry) { any_entry = true; break; }
+            if (entry_span_hint.begin.line == 0) entry_span_hint = ast->span;
+            if (any_entry) break;
+        }
+    }
+    if (!any_entry) {
+        diags.error("K4005",
+                    "в проекте нет app_entry — нечего собирать",
+                    entry_span_hint)
+            .hint("добавьте честную точку входа: app_entry { ... }")
+            .fix("как должно выглядеть:", "app_entry {\n    print(\"привет\");\n}")
+            .emit();
+        diags.render_all(std::cout, color);
+        std::cout << "итог: сначала исправьте ошибки — собрать нельзя\n";
+        return 1;
+    }
+
     // Генерация C++ проекта (все единицы загрузки в одну трансляционную).
     std::filesystem::create_directories("kinic_build");
     std::string cpp_path = "kinic_build/" + stem + ".cpp";

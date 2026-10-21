@@ -139,6 +139,22 @@ Token lex_number(Lexer& L, DiagnosticEngine& dg) {
         }
     } else {
         while (is_digit(L.cur())) L.bump();
+
+        // Честная проверка B-08: ведущий ноль честно запрещён — KINII
+        // десятичный, а C++ молча понимал бы 010 как восьмеричное 8.
+        // «0.5» здесь не кандидат — для него честная K0007 про дробные.
+        if (L.src[start] == '0' && L.pos - start > 1 && is_digit(L.src[start + 1])) {
+            std::string full = L.src.substr(start, L.pos - start);
+            Span sp = L.span_of(b);
+            dg.error("K0010",
+                     "ведущий ноль запрещён: '" + full + "' — KINII десятичный",
+                     sp)
+                .hint("C++ молча счёл бы это восьмеричным числом")
+                .fix("как должно выглядеть:",
+                     "let u32 count = 10;      // просто десятичное\n"
+                     "let ptr addr = 0x10;     // если нужна шестнадцатеричная запись")
+                .emit();
+        }
     }
 
     // Дробные числа пока не поддерживаются — объясняем это сразу.
@@ -166,6 +182,13 @@ Token lex_number(Lexer& L, DiagnosticEngine& dg) {
     }
 
     std::string text = L.src.substr(start, L.pos - start);
+    // Честная нормализация B-08: ведущий ноль уже честно показан как K0010;
+    // токен обязан честно нести десятичное значение, чтобы бракованный
+    // литерал не превращался кодегеном в окталь C++.
+    if (text.size() > 1 && text[0] == '0' && is_digit(text[1])) {
+        size_t nz = text.find_first_not_of('0');
+        text.erase(0, nz == std::string::npos ? text.size() - 1 : nz);
+    }
     return L.make(Tok::Number, b, std::move(text));
 }
 

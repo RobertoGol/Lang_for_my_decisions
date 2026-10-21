@@ -91,7 +91,15 @@ FileId Driver::compile(const std::string& raw_path, const Span& at_import) {
 
         std::string resolved;
         std::string probe;
-        if (read_file_raw(cand1, probe)) resolved = cand1;
+        // Честный фикс B-11: содержимое из редактора важнее дискового —
+        // тот же порядок обязывает резолв импорта: несохранённый файл
+        // честно не должен давать ложный K2012 «не найден».
+        auto has_override = [&](const std::string& p) {
+            return overrides_.find(p) != overrides_.end();
+        };
+        if (has_override(cand1)) resolved = cand1;
+        else if (has_override(cand2)) resolved = cand2;
+        else if (read_file_raw(cand1, probe)) resolved = cand1;
         else if (read_file_raw(cand2, probe)) resolved = cand2;
 
         if (resolved.empty()) {

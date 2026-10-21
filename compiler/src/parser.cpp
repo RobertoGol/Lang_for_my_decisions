@@ -237,7 +237,28 @@ private:
             advance();
             ty->kind = TypeExpr::Array;
             const Token& n = expect(Tok::Number, "длина массива");
-            ty->array_len = (uint32_t)strtoul(n.text.c_str(), nullptr, 10);
+            // Честная проверка B-08: strtoul молча обрезал переполнение
+            // (99999999999 превращался в мусор) — теперь честная диагностика.
+            {
+                unsigned long long v = 0;
+                bool overflow = false;
+                try {
+                    v = std::stoull(n.text, nullptr, 10);
+                } catch (const std::exception&) {
+                    overflow = true;
+                }
+                if (overflow || v > 0xFFFFFFFFULL) {
+                    dg_.error("K1015",
+                              "длина массива " + n.text +
+                                  " не помещается в размер честного массива",
+                              span_of(n))
+                        .hint("KINII честно хранит длину в 32 битах (до 4294967295)")
+                        .fix("как должно выглядеть:", "let u32[1024] буфер;")
+                        .emit();
+                    v = 0;
+                }
+                ty->array_len = (uint32_t)v;
+            }
             expect(Tok::RBracket, "']' после длины массива");
         }
 
@@ -483,7 +504,38 @@ private:
             st->cases.push_back(std::move(c));
         }
 
-        if (match(Tok::RBrace)) braces_.pop_back();
+        // Честная синхронизация B-09: если '}' нет (мусорная ветка, конец
+        // файла) — нельзя ни потреблять скобку чужого блока, ни оставлять
+        // запись braces_ висеть: ложная K1008 честно вылетала на конце
+        // файла. Честно выравниваемся с балансом вложенных '{ }'.
+        if (match(Tok::RBrace)) {
+            braces_.pop_back();
+        } else {
+            bool closed = false;
+            size_t depth = 0;
+            while (!check(Tok::Eof)) {
+                if (check(Tok::LBrace)) {
+                    ++depth;
+                    advance();
+                } else if (check(Tok::RBrace)) {
+                    advance();
+                    if (depth == 0) {
+                        closed = true;
+                        break;
+                    }
+                    --depth;
+                } else {
+                    advance();
+                }
+            }
+            braces_.pop_back(); // честный контракт: одна '{' — одна запись
+            if (!closed)
+                dg_.error("K1008", "decide не закрыт фигурной скобкой '}'", st->span)
+                    .hint("каждой '{' честно соответствует своя '}'")
+                    .fix("как должно выглядеть:",
+                         "decide (x) { weight(1) => { ... } else => { ... } }")
+                    .emit();
+        }
 
         st->span = span_loc(st->span.begin, prev_end());
         return st;
@@ -1011,7 +1063,11 @@ private:
                 const Token& nm = expect(Tok::Ident, "имя системного модуля после '@'",
                                          "let arch = @sys.bitness();");
                 auto e = std::make_unique<Expr>(Expr::Ident);
-                e->text = "@" + nm.text;
+                // Честный фикс B-05: '@' — это маркер системного вызова у
+                // чела, а не часть имени. Срезаем префикс честно здесь,
+                // чтобы сема (is_known_root) и кодеген (dotted_path)
+                // честно согласились вместо ложной K2002.
+                e->text = nm.text;
                 e->span = span_join(span_of(t), span_of(nm));
                 return e;
             }
