@@ -357,7 +357,7 @@ std::vector<Token> lex_file(FileId fid, const std::string& src, DiagnosticEngine
                 }
                 if (!closed) {
                     Span sp = L.span_of(cb);
-                    diags.error("K0010", "блок-комментарий не закрыт — не хватает '*/'", sp)
+                    diags.error("K0011", "блок-комментарий не закрыт — не хватает '*/'", sp)
                         .fix("как должно выглядеть:", "/* это комментарий */")
                         .emit();
                 }

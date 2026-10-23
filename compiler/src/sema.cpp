@@ -545,7 +545,7 @@ private:
             case Stmt::Decide: {
                 if (!st->kids.empty()) walk_expr(st->kids[0].get());
                 if (st->cases.empty()) {
-                    dg_.warning("K2004", "'decide' без веток — он ничего не решает", st->span)
+                    dg_.warning("K2016", "'decide' без веток — он ничего не решает", st->span)
                         .hint("добавьте ветку: weight(значение) => { ... } или else => { ... }")
                         .emit();
                 }
@@ -559,7 +559,7 @@ private:
                 }
                 if (!has_else && !st->cases.empty())
                     dg_.warning(
-                        "K2005",
+                        "K2017",
                         "в 'decide' нет ветки 'else' — если ни один weight не совпал, "
                         "выполнение молча перейдёт дальше",
                         st->span)
